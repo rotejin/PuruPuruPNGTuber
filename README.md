@@ -9,6 +9,10 @@
   <img alt="PNG only" src="https://img.shields.io/badge/Avatar-PNG%20only-orange">
 </p>
 
+<p align="center">
+  <img src="./docs/images/purupuru.gif" alt="PuruPuru PNGTuber demo" width="720">
+</p>
+
 ## 概要 / Overview
 
 ぷるぷるPNGTuberは、通常のPNGTuber向け表情差分PNGに「前髪」と「後ろ髪」の2枚を追加するだけで、髪揺れ・顔向き・口パク・まばたきに対応したリッチなPNGTuberアバターを作るためのローカルWebアプリです。
