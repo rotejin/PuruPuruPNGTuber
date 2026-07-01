@@ -106,6 +106,11 @@ chmod +x ./run_local_server.sh
 ./run_local_server.sh
 ```
 
+### docker
+```bash
+docker compose up -d
+```
+
 または:
 
 ```bash
