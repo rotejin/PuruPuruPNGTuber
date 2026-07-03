@@ -10766,7 +10766,7 @@
     const motion = layer.depthMotion || head;
     const depth =
       clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
-    const rate = lerp(0.55, 0.18, depth);
+    const rate = lerp(0.3, 0.05, depth);
     const neckY = currentNeckPivot().y;
     const span = Math.max(160, (CROP.h - neckY) * 0.85);
     const w = 1 - smoothstep(neckY, neckY + span, y);
