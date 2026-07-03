@@ -213,11 +213,11 @@
       </section>
           </div>
           <div class="section-page" data-section-page="layout" hidden>
+        <header class="section-head">
+          <h2>全体</h2>
+          <p>キャラの大きさと、いつもの自然なゆれ。</p>
+        </header>
         <section class="panel is-basic-panel">
-          <div class="panel-title">
-            <span>配置と動き</span>
-            <strong>おすすめ</strong>
-          </div>
           <label class="control-row">
             <span>サイズ<small>キャラ全体の大きさ</small></span>
             <input id="avatarSize" type="range" min="30" max="300" value="120" />
@@ -240,9 +240,30 @@
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="layout">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="face" hidden>
+        <header class="section-head">
+          <h2>顔の向き</h2>
+          <p>マウスやカメラに、どのくらい顔がついていくか。</p>
+        </header>
         <section class="panel is-motion-panel">
           <div class="panel-title">
-            <span>可動範囲</span>
+            <span>ついていき方</span>
+            <strong>追従</strong>
+          </div>
+          <label class="control-row">
+            <span>顔向きの強さ<small>マウス/カメラ反応量</small></span>
+            <input id="angleStrength" type="range" min="0" max="160" value="100" />
+            <output for="angleStrength">100%</output>
+          </label>
+          <label class="control-row">
+            <span>追従速度<small>向きが追いつく速さ</small></span>
+            <input id="followSpeed" type="range" min="4" max="100" value="60" />
+            <output for="followSpeed">60%</output>
+          </label>
+        </section>
+
+        <section class="panel is-motion-panel">
+          <div class="panel-title">
+            <span>どこまで向ける？</span>
             <strong>向ける限界</strong>
           </div>
           <p class="small-note">方向ボタンを押すと、その向きでキャラが止まります。横のバーを動かすと、綺麗に向ける限界がすぐ反映されます。</p>
@@ -269,87 +290,61 @@
           <button id="testCenterButton" class="ghost-button muted-button full-width-button" type="button" aria-pressed="false">中央に戻す</button>
         </section>
 
-        <section class="panel is-motion-panel">
-          <div class="panel-title">
-            <span>顔向き</span>
-            <strong>追従</strong>
+        <details class="accordion">
+          <summary>見え方のこまかい補正<span class="accordion-caret" aria-hidden="true"></span></summary>
+          <div class="accordion-body">
+            <p class="small-note">横向き・上下向きの形が弱い時だけ微調整します。</p>
+            <label class="control-row">
+              <span>ワープの効き<small>登録した変形の強さ</small></span>
+              <input id="faceWarp" type="range" min="0" max="180" value="120" />
+              <output for="faceWarp">120%</output>
+            </label>
+            <label class="control-row">
+              <span>横向きの形<small>左右向きの顔変形</small></span>
+              <input id="angleXDeform" type="range" min="0" max="200" value="30" />
+              <output for="angleXDeform">30%</output>
+            </label>
+            <label class="control-row">
+              <span>顔の立体感<small>横向き時の丸みと奥行き</small></span>
+              <input id="faceTurnDepth" type="range" min="0" max="200" value="15" />
+              <output for="faceTurnDepth">15%</output>
+            </label>
+            <label class="control-row">
+              <span>斜め向きの補正<small>横向き時の上下ねじれ</small></span>
+              <input id="faceTurnVertical" type="range" min="0" max="150" value="0" />
+              <output for="faceTurnVertical">0%</output>
+            </label>
+            <label class="control-row">
+              <span>上下向きの形<small>上下向きの顔変形</small></span>
+              <input id="angleYDeform" type="range" min="0" max="200" value="200" />
+              <output for="angleYDeform">200%</output>
+            </label>
+            <button id="diagonalFaceWarpButton" class="ghost-button full-width-button" type="button" aria-pressed="true">斜め補正 ON</button>
+            <div class="simple-grid">
+              <button id="faceDepthSetupButton" class="ghost-button" type="button" aria-pressed="false">奥行き点編集 OFF</button>
+              <button id="faceDepthAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
+            </div>
+            <button id="faceDepthSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">奥行き点を保存</button>
+            <p id="faceDepthSetupStatus" class="small-note">左目・右目・鼻・口・顎の5点を合わせると、立体顔補正のズレを抑えられます。</p>
+            <div class="simple-grid">
+              <button id="neckPivotSetupButton" class="ghost-button" type="button" aria-pressed="false">首支点編集 OFF</button>
+              <button id="neckPivotAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
+            </div>
+            <button id="neckPivotSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">首支点を保存</button>
+            <p id="neckPivotSetupStatus" class="small-note">首の付け根に支点を置くと、首元を残して頭が動くように見えます。</p>
           </div>
-          <label class="control-row">
-            <span>顔向きの強さ<small>マウス/カメラ反応量</small></span>
-            <input id="angleStrength" type="range" min="0" max="160" value="100" />
-            <output for="angleStrength">100%</output>
-          </label>
-          <label class="control-row">
-            <span>追従速度<small>向きが追いつく速さ</small></span>
-            <input id="followSpeed" type="range" min="4" max="100" value="60" />
-            <output for="followSpeed">60%</output>
-          </label>
-        </section>
-
-        <section class="panel is-motion-panel">
-          <div class="panel-title">
-            <span>形の補正</span>
-            <strong>新キャラ用</strong>
-          </div>
-          <p class="small-note">横向き・上下向きの形が弱い時だけ微調整します。</p>
-          <label class="control-row">
-            <span>ワープの効き<small>登録した変形の強さ</small></span>
-            <input id="faceWarp" type="range" min="0" max="180" value="120" />
-            <output for="faceWarp">120%</output>
-          </label>
-          <label class="control-row">
-            <span>横向きの形<small>左右向きの顔変形</small></span>
-            <input id="angleXDeform" type="range" min="0" max="200" value="30" />
-            <output for="angleXDeform">30%</output>
-          </label>
-          <label class="control-row">
-            <span>顔の立体感<small>横向き時の丸みと奥行き</small></span>
-            <input id="faceTurnDepth" type="range" min="0" max="200" value="15" />
-            <output for="faceTurnDepth">15%</output>
-          </label>
-          <label class="control-row">
-            <span>斜め向きの補正<small>横向き時の上下ねじれ</small></span>
-            <input id="faceTurnVertical" type="range" min="0" max="150" value="0" />
-            <output for="faceTurnVertical">0%</output>
-          </label>
-          <button id="diagonalFaceWarpButton" class="ghost-button full-width-button" type="button" aria-pressed="true">斜め補正 ON</button>
-          <div class="simple-grid">
-            <button id="faceDepthSetupButton" class="ghost-button" type="button" aria-pressed="false">奥行き点編集 OFF</button>
-            <button id="faceDepthAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
-          </div>
-          <button id="faceDepthSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">奥行き点を保存</button>
-          <p id="faceDepthSetupStatus" class="small-note">左目・右目・鼻・口・顎の5点を合わせると、立体顔補正のズレを抑えられます。</p>
-          <div class="simple-grid">
-            <button id="neckPivotSetupButton" class="ghost-button" type="button" aria-pressed="false">首支点編集 OFF</button>
-            <button id="neckPivotAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
-          </div>
-          <button id="neckPivotSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">首支点を保存</button>
-          <p id="neckPivotSetupStatus" class="small-note">首の付け根に支点を置くと、首元を残して頭が動くように見えます。</p>
-          <label class="control-row">
-            <span>上下向きの形<small>上下向きの顔変形</small></span>
-            <input id="angleYDeform" type="range" min="0" max="200" value="200" />
-            <output for="angleYDeform">200%</output>
-          </label>
-        </section>
+        </details>
         <p class="see-points">見るポイント: 左右で目や口が潰れすぎないか ／ 下向きで顎が伸びすぎないか ／ 上向きで顔が膨らみすぎないか ／ 前髪と顔のズレが目立たないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="face">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="mouth" hidden>
-        <section class="panel is-basic-panel">
-          <div class="panel-title">
-            <span>配置と動き</span>
-            <strong>おすすめ</strong>
-          </div>
-          <label class="control-row">
-            <span>ぴょこ<small>声に反応する上下バウンス</small></span>
-            <input id="pyokoStrength" type="range" min="0" max="100" value="15" />
-            <output for="pyokoStrength">15%</output>
-          </label>
-        </section>
-
+        <header class="section-head">
+          <h2>口パク</h2>
+          <p>どのくらいの声で、どんなふうに口が動くか。</p>
+        </header>
         <section class="panel is-audio-panel">
           <div class="panel-title">
-            <span>マイク反応</span>
+            <span>声への反応</span>
             <strong>しきい値</strong>
           </div>
           <label class="control-row">
@@ -379,10 +374,22 @@
           </label>
           <p class="small-note">口は素早く開き、戻る時は少し遅れます。大きく喋った時だけ顎と頬が軽くぷにっと動きます。</p>
         </section>
+
+        <section class="panel is-basic-panel">
+          <label class="control-row">
+            <span>ぴょこ<small>声に反応する上下バウンス</small></span>
+            <input id="pyokoStrength" type="range" min="0" max="100" value="15" />
+            <output for="pyokoStrength">15%</output>
+          </label>
+        </section>
         <p class="see-points">見るポイント: 普通の声で半開きになるか ／ 大きい声で全開になるか ／ 無音時にすぐ閉じすぎないか ／ 喋るたびに跳ねすぎないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="mouth">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="eyes" hidden>
+        <header class="section-head">
+          <h2>目</h2>
+          <p>瞳のうるみと、キラッと光るハイライト。</p>
+        </header>
         <section class="panel is-visual-panel">
           <div class="panel-title">
             <span>瞳の位置合わせ</span>
@@ -418,7 +425,7 @@
 
         <section class="panel is-visual-panel">
           <div class="panel-title">
-            <span>ハイライト</span>
+            <span>目のハイライト</span>
             <strong>目の光</strong>
           </div>
           <label class="check-row">
@@ -494,11 +501,11 @@
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="eyes">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="hair" hidden>
+        <header class="section-head">
+          <h2>髪</h2>
+          <p>ふわっとゆれる髪の動きかた。</p>
+        </header>
         <section class="panel is-basic-panel">
-          <div class="panel-title">
-            <span>配置と動き</span>
-            <strong>おすすめ</strong>
-          </div>
           <label class="check-row">
             <input id="hairVisible" type="checkbox" checked />
             <span>髪を表示<small>OFFで元の前髪・後ろ髪だけ隠す</small></span>
@@ -518,6 +525,13 @@
             <input id="hairBundleStrength" type="range" min="0" max="150" value="100" />
             <output for="hairBundleStrength">100%</output>
           </label>
+        </section>
+
+        <section class="panel is-basic-panel">
+          <div class="panel-title">
+            <span>髪束の編集</span>
+            <strong>たば</strong>
+          </div>
           <label class="select-row">
             <span>髪束の表示<small>線が多い時は絞る</small></span>
             <select id="hairBundleFocusSelect">
@@ -538,41 +552,10 @@
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="hair">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="look" hidden>
-        <section class="panel is-basic-panel">
-          <div class="panel-title">
-            <span>配置と動き</span>
-            <strong>おすすめ</strong>
-          </div>
-          <label class="check-row">
-            <input id="frontHairShadowEnabled" type="checkbox" checked />
-            <span>前髪影</span>
-          </label>
-          <label class="control-row">
-            <span>前髪影の濃さ<small>顔に落ちる影の強さ</small></span>
-            <input id="frontHairShadowStrength" type="range" min="0" max="100" value="28" />
-            <output for="frontHairShadowStrength">28%</output>
-          </label>
-          <label class="control-row">
-            <span>前髪影の距離<small>前髪から影を落とす距離</small></span>
-            <input id="frontHairShadowDistance" type="range" min="0" max="32" value="10" />
-            <output for="frontHairShadowDistance">10px</output>
-          </label>
-          <label class="check-row">
-            <input id="neckShadowEnabled" type="checkbox" checked />
-            <span>首元の影<small>頭が体へ落とす接地影</small></span>
-          </label>
-          <label class="control-row">
-            <span>首元影の濃さ<small>体・後ろ髪に落ちる影の強さ</small></span>
-            <input id="neckShadowStrength" type="range" min="0" max="100" value="30" />
-            <output for="neckShadowStrength">30%</output>
-          </label>
-          <label class="control-row">
-            <span>首元影の距離<small>顎下から影を落とす距離</small></span>
-            <input id="neckShadowDistance" type="range" min="0" max="40" value="12" />
-            <output for="neckShadowDistance">12px</output>
-          </label>
-        </section>
-
+        <header class="section-head">
+          <h2>色・影</h2>
+          <p>背景の色、髪の色、顔に落ちる影。</p>
+        </header>
         <section class="panel is-visual-panel">
           <div class="panel-title">
             <span>背景色</span>
@@ -617,6 +600,41 @@
             <output for="hairTintLightness">0%</output>
           </label>
           <button id="hairColorReset" class="ghost-button muted-button full-width-button" type="button" aria-pressed="true">元の髪色に戻す</button>
+        </section>
+
+        <section class="panel is-basic-panel">
+          <div class="panel-title">
+            <span>影</span>
+            <strong>接地感</strong>
+          </div>
+          <label class="check-row">
+            <input id="frontHairShadowEnabled" type="checkbox" checked />
+            <span>前髪影</span>
+          </label>
+          <label class="control-row">
+            <span>前髪影の濃さ<small>顔に落ちる影の強さ</small></span>
+            <input id="frontHairShadowStrength" type="range" min="0" max="100" value="28" />
+            <output for="frontHairShadowStrength">28%</output>
+          </label>
+          <label class="control-row">
+            <span>前髪影の距離<small>前髪から影を落とす距離</small></span>
+            <input id="frontHairShadowDistance" type="range" min="0" max="32" value="10" />
+            <output for="frontHairShadowDistance">10px</output>
+          </label>
+          <label class="check-row">
+            <input id="neckShadowEnabled" type="checkbox" checked />
+            <span>首元の影<small>頭が体へ落とす接地影</small></span>
+          </label>
+          <label class="control-row">
+            <span>首元影の濃さ<small>体・後ろ髪に落ちる影の強さ</small></span>
+            <input id="neckShadowStrength" type="range" min="0" max="100" value="30" />
+            <output for="neckShadowStrength">30%</output>
+          </label>
+          <label class="control-row">
+            <span>首元影の距離<small>顎下から影を落とす距離</small></span>
+            <input id="neckShadowDistance" type="range" min="0" max="40" value="12" />
+            <output for="neckShadowDistance">12px</output>
+          </label>
         </section>
         <p class="see-points">見るポイント: 前髪影が濃すぎて顔が汚くなっていないか ／ 背景色がクロマキー抜きで残らないか ／ 髪色が元のPNGと極端に変わっていないか ／ パステルにしても白飛びしないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="look">基準値へ戻す</button>

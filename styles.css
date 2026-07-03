@@ -1565,6 +1565,78 @@ body.stage-bg-dark .meter-threshold {
   vertical-align: middle;
 }
 
+/* Phase 4: 各調整ページ共通のセクション見出し（h2 + 説明1行） */
+.section-head {
+  margin: 2px 0 14px;
+}
+
+.section-head h2 {
+  margin: 0 0 2px;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.section-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+
+/* Phase 4: アコーディオン（初期閉のカード。見え方のこまかい補正 等） */
+.accordion {
+  margin: 12px 0 0;
+  background: var(--card-bg);
+  border: 1px solid var(--card-line);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 13px 14px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 900;
+  list-style: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.accordion summary::marker,
+.accordion summary::-webkit-details-marker {
+  display: none;
+  content: "";
+}
+
+.accordion summary:hover {
+  background: rgba(74, 58, 46, 0.03);
+}
+
+.accordion-caret {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.accordion-caret::after {
+  content: "▾ ひらく";
+}
+
+.accordion[open] .accordion-caret::after {
+  content: "▴ とじる";
+}
+
+.accordion-body {
+  padding: 0 14px 14px;
+}
+
 /* 詳細・見るポイント・スナップショット・セクション戻し */
 .detail-panel {
   margin-top: 8px;
