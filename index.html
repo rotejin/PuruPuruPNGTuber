@@ -509,6 +509,20 @@
             <input id="frontHairShadowDistance" type="range" min="0" max="32" value="10" />
             <output for="frontHairShadowDistance">10px</output>
           </label>
+          <label class="check-row">
+            <input id="neckShadowEnabled" type="checkbox" checked />
+            <span>首元の影<small>頭が体へ落とす接地影</small></span>
+          </label>
+          <label class="control-row">
+            <span>首元影の濃さ<small>体・後ろ髪に落ちる影の強さ</small></span>
+            <input id="neckShadowStrength" type="range" min="0" max="100" value="30" />
+            <output for="neckShadowStrength">30%</output>
+          </label>
+          <label class="control-row">
+            <span>首元影の距離<small>顎下から影を落とす距離</small></span>
+            <input id="neckShadowDistance" type="range" min="0" max="40" value="12" />
+            <output for="neckShadowDistance">12px</output>
+          </label>
         </section>
 
         <section class="panel is-visual-panel">

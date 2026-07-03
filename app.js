@@ -174,7 +174,7 @@
     mouth: ["micGain", "mouthHalf", "mouthFull", "mouthRelease", "mouthCrossfadeMs", "pyokoStrength"],
     eyes: ["highlightEnabled", "highlightStrength", "highlightSize", "highlightAspect", "highlightFilmWobble", "subHighlightEnabled", "subHighlightSize", "subHighlightAspect", "subHighlightFilmWobble", "tearLensEnabled", "tearLensStrength", "tearLensRadiusX", "tearLensRadiusY", "tearLensRotationLeft", "tearLensRotationRight"],
     hair: ["hairVisible", "hairWarp", "hairSpring", "hairBundleStrength"],
-    look: ["frontHairShadowEnabled", "frontHairShadowStrength", "frontHairShadowDistance", "bgColor", "hairColor", "hairTintLightness", "hairTintEnabled"],
+    look: ["frontHairShadowEnabled", "frontHairShadowStrength", "frontHairShadowDistance", "neckShadowEnabled", "neckShadowStrength", "neckShadowDistance", "bgColor", "hairColor", "hairTintLightness", "hairTintEnabled"],
   };
   // キャラ1（assets/demo-avatar/default-settings.json）を基準にした共通リグ値。
   // 顔の横向き変形と髪デフォーマの比率がキャラごとに変わると、髪だけ追従しない/顔だけ滑るため、
@@ -285,6 +285,8 @@
     "hairBundleStrength",
     "frontHairShadowStrength",
     "frontHairShadowDistance",
+    "neckShadowStrength",
+    "neckShadowDistance",
     "followSpeed",
     "rangeLeft",
     "rangeRight",
@@ -322,6 +324,7 @@
     "tearLensEnabled",
     "hairVisible",
     "frontHairShadowEnabled",
+    "neckShadowEnabled",
     "hairTintEnabled",
     "showMesh",
     "autoBlink",
@@ -351,6 +354,7 @@
     highlightSize: "px",
     subHighlightSize: "px",
     frontHairShadowDistance: "px",
+    neckShadowDistance: "px",
     tearLensRadiusX: "px",
     tearLensRadiusY: "px",
     tearLensRotationLeft: "°",
@@ -380,6 +384,8 @@
     hairBundleStrength: 100,
     frontHairShadowStrength: 28,
     frontHairShadowDistance: 10,
+    neckShadowStrength: 30,
+    neckShadowDistance: 12,
     followSpeed: 60,
     rangeLeft: 60,
     rangeRight: 60,
@@ -408,6 +414,7 @@
     tearLensRotationLeft: 0,
     tearLensRotationRight: 0,
     frontHairShadowEnabled: true,
+    neckShadowEnabled: true,
     eyeSetupMode: false,
     highlightSetupMode: false,
     faceDepthSetupMode: false,
@@ -634,6 +641,7 @@
     highlightEnabled: document.querySelector("#highlightEnabled"),
     hairVisible: document.querySelector("#hairVisible"),
     frontHairShadowEnabled: document.querySelector("#frontHairShadowEnabled"),
+    neckShadowEnabled: document.querySelector("#neckShadowEnabled"),
     subHighlightEnabled: document.querySelector("#subHighlightEnabled"),
     subHighlightControls: document.querySelector("#subHighlightControls"),
     highlightSetupButton: document.querySelector("#highlightSetupButton"),
@@ -3553,6 +3561,7 @@
       scaleNumberField(settings.state, "tearLensRadiusX", sx);
       scaleNumberField(settings.state, "tearLensRadiusY", sy);
       scaleNumberField(settings.state, "frontHairShadowDistance", s);
+      scaleNumberField(settings.state, "neckShadowDistance", s);
     }
     if (Array.isArray(settings.itemLayers)) {
       settings.itemLayers = settings.itemLayers.map((layer) => {
@@ -10561,6 +10570,108 @@
     ctx.restore();
   }
 
+  function neckShadowStrengthAmount() {
+    return clamp(Number(state.neckShadowStrength) || 0, 0, 100) / 100;
+  }
+
+  function neckShadowDistancePx() {
+    return clamp(Number(state.neckShadowDistance) || 0, 0, 40);
+  }
+
+  function neckShadowGeometry(distance) {
+    const yaw = clamp(state.angleX * (state.angleStrength / 100), -1.6, 1.6);
+    const pitch = clamp(state.angleY * (state.angleStrength / 100), -1.6, 1.6);
+    return {
+      offsetX: clamp(yaw * 6, -14, 14),
+      offsetY: distance + clamp(pitch * 4, -6, 8),
+      blur: clamp(distance * 0.45 + 2.5, 2.5, 16),
+    };
+  }
+
+  function drawNeckShadowShape(distance) {
+    const { offsetX, offsetY, blur } = neckShadowGeometry(distance);
+    frontHairShadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowCtx.globalAlpha = 1;
+    frontHairShadowCtx.globalCompositeOperation = "source-over";
+    frontHairShadowCtx.filter = "none";
+    frontHairShadowCtx.clearRect(0, 0, CROP.w, CROP.h);
+
+    // 顔シルエットを下方向へずらして描き、頭が体へ落とす接地影の形を作る。
+    const faceSpec = currentFaceMeshSpec();
+    drawMeshCroppedImage(
+      frontHairShadowCtx,
+      images[expressionKey()],
+      (x, y) => {
+        const p = faceSpec.warpFn(x, y);
+        return { x: p.x + offsetX, y: p.y + offsetY };
+      },
+      faceSpec.cols,
+      faceSpec.rows
+    );
+
+    frontHairShadowCtx.globalCompositeOperation = "source-in";
+    frontHairShadowCtx.fillStyle = "#2c1e1a";
+    frontHairShadowCtx.fillRect(0, 0, CROP.w, CROP.h);
+
+    // 顎下〜首元だけに影を残し、頬横の髪などへ広がらないよう上側をフェードアウト。
+    const neckY = currentNeckPivot().y;
+    const fade = frontHairShadowCtx.createLinearGradient(0, neckY - 320, 0, neckY - 80);
+    fade.addColorStop(0, "rgba(0,0,0,0)");
+    fade.addColorStop(1, "rgba(0,0,0,1)");
+    frontHairShadowCtx.globalCompositeOperation = "destination-in";
+    frontHairShadowCtx.fillStyle = fade;
+    frontHairShadowCtx.fillRect(0, 0, CROP.w, CROP.h);
+    frontHairShadowCtx.globalCompositeOperation = "source-over";
+    return { blur };
+  }
+
+  function drawNeckShadowReceiverMask() {
+    frontHairShadowReceiverCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowReceiverCtx.globalAlpha = 1;
+    frontHairShadowReceiverCtx.globalCompositeOperation = "source-over";
+    frontHairShadowReceiverCtx.filter = "none";
+    frontHairShadowReceiverCtx.clearRect(0, 0, CROP.w, CROP.h);
+
+    drawItemLayers(frontHairShadowReceiverCtx, "characterBack");
+    if (state.hairVisible && images.backHair) {
+      drawMeshCroppedImage(frontHairShadowReceiverCtx, images.backHair, (x, y) => hairWarpPoint(x, y, "back"), 14, 10);
+    }
+    drawItemLayers(frontHairShadowReceiverCtx, "faceBack");
+  }
+
+  // 首元の接地シャドウ: 顔より後ろのレイヤー（体アイテム・後ろ髪）にだけ、
+  // 顔シルエットのぼかし影を落として頭と体を光学的に接続する。
+  function drawNeckContactShadow() {
+    const strength = neckShadowStrengthAmount();
+    const distance = neckShadowDistancePx();
+    if (OBS_MODE && normalizeObsPresetKey(obsPresetKey) === "light") return;
+    if (!state.neckShadowEnabled || strength <= 0.001 || distance <= 0.001 || !lastCharacterTransform) return;
+    if (!images[expressionKey()]) return;
+
+    const { blur } = drawNeckShadowShape(distance);
+    drawNeckShadowReceiverMask();
+
+    frontHairShadowCompositeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowCompositeCtx.globalAlpha = 1;
+    frontHairShadowCompositeCtx.globalCompositeOperation = "source-over";
+    frontHairShadowCompositeCtx.filter = "none";
+    frontHairShadowCompositeCtx.clearRect(0, 0, CROP.w, CROP.h);
+    frontHairShadowCompositeCtx.filter = `blur(${blur}px)`;
+    frontHairShadowCompositeCtx.drawImage(frontHairShadowCanvas, 0, 0);
+    frontHairShadowCompositeCtx.filter = "none";
+    frontHairShadowCompositeCtx.globalCompositeOperation = "destination-in";
+    frontHairShadowCompositeCtx.drawImage(frontHairShadowReceiverCanvas, 0, 0);
+    frontHairShadowCompositeCtx.globalCompositeOperation = "source-over";
+
+    ctx.save();
+    if (applyCharacterLocalTransform(ctx)) {
+      ctx.globalAlpha = strength * 0.6;
+      ctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(frontHairShadowCompositeCanvas, 0, 0);
+    }
+    ctx.restore();
+  }
+
   function drawFaceAndHighlightLayer() {
     clearCharacterCanvas();
     const faceSpec = currentFaceMeshSpec();
@@ -12045,6 +12156,7 @@
     drawCharacterAnchoredItemLayers("characterBack");
     drawBackHairLayer();
     drawCharacterAnchoredItemLayers("faceBack");
+    drawNeckContactShadow();
     drawFaceAndHighlightLayer();
     drawCharacterAnchoredItemLayers("faceFront");
     drawFrontHairCastShadow();
@@ -12968,6 +13080,7 @@
     if (ui.highlightEnabled) ui.highlightEnabled.checked = Boolean(state.highlightEnabled);
     if (ui.hairVisible) ui.hairVisible.checked = Boolean(state.hairVisible);
     if (ui.frontHairShadowEnabled) ui.frontHairShadowEnabled.checked = Boolean(state.frontHairShadowEnabled);
+    if (ui.neckShadowEnabled) ui.neckShadowEnabled.checked = Boolean(state.neckShadowEnabled);
     updateSubHighlightControls();
     if (ui.tearLensEnabled) ui.tearLensEnabled.checked = Boolean(state.tearLensEnabled);
     if (ui.showMesh) ui.showMesh.checked = Boolean(state.showMesh);
@@ -13354,6 +13467,8 @@
     bindRange("hairBundleStrength", "hairBundleStrength");
     bindRange("frontHairShadowStrength", "frontHairShadowStrength");
     bindRange("frontHairShadowDistance", "frontHairShadowDistance", "px");
+    bindRange("neckShadowStrength", "neckShadowStrength");
+    bindRange("neckShadowDistance", "neckShadowDistance", "px");
     bindRange("followSpeed", "followSpeed");
     bindRange("rangeLeft", "rangeLeft");
     bindRange("rangeRight", "rangeRight");
@@ -13404,6 +13519,11 @@
       updateChangedBadgeForControl("hairVisible");
     });
 
+    ui.neckShadowEnabled?.addEventListener("change", () => {
+      state.neckShadowEnabled = ui.neckShadowEnabled.checked;
+      updateChangedBadgeForControl("neckShadowEnabled");
+      markActiveCharacterDirty("settings", "neck-shadow");
+    });
     ui.frontHairShadowEnabled?.addEventListener("change", () => {
       state.frontHairShadowEnabled = ui.frontHairShadowEnabled.checked;
       updateChangedBadgeForControl("frontHairShadowEnabled");
