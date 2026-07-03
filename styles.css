@@ -8,6 +8,9 @@
   --ink-soft: #6b5a4b;
   --muted: #9a8a7a;
   --line: rgba(74, 58, 46, 0.12);
+  --line-strong: rgba(74, 58, 46, 0.26);
+  --hover-tint: rgba(74, 58, 46, 0.1);
+  --hover-tint-soft: rgba(74, 58, 46, 0.03);
   --accent: #e06a45;
   --accent-rgb: 224, 106, 69;
   --accent-bright: #ea7a52;
@@ -106,29 +109,35 @@ body.obs-mode #stage {
 
 body.stage-bg-dark {
   color-scheme: dark;
-  --dock-bg: rgba(48, 45, 42, 0.92);
-  --dock-bg-strong: rgba(54, 51, 48, 0.96);
-  --ink: rgba(255, 248, 238, 0.88);
-  --ink-soft: rgba(255, 248, 238, 0.68);
-  --muted: rgba(255, 248, 238, 0.54);
-  --line: rgba(255, 248, 238, 0.14);
-  --soft-bg: rgba(255, 248, 238, 0.08);
-  --card-bg: rgba(54, 51, 48, 0.94);
-  --card-line: rgba(255, 248, 238, 0.12);
-  --rail-bg: rgba(40, 38, 36, 0.75);
-  --hairline-soft: rgba(255, 248, 238, 0.14);
-  --accent-soft: rgba(224, 106, 69, 0.2);
-  --warn-bg: rgba(232, 176, 75, 0.18);
-  --panel-bg: rgba(255, 248, 238, 0.08);
-  --panel-bg-soft: rgba(255, 248, 238, 0.06);
-  --panel-bg-strong: rgba(255, 248, 238, 0.12);
+  /* 提案Aパレットの反転版（ユーザー確定値）。面・文字・アクセントは変数化された
+     コンポーネントへ自動的に伝播する。 */
+  --dock-bg: rgba(46, 42, 39, 0.93);
+  --dock-bg-strong: rgba(58, 53, 49, 0.97);
+  --ink: #f2e8dc;
+  --ink-soft: rgba(242, 232, 220, 0.72);
+  --muted: rgba(242, 232, 220, 0.5);
+  --line: rgba(242, 232, 220, 0.16);
+  --line-strong: rgba(242, 232, 220, 0.26);
+  --hover-tint: rgba(242, 232, 220, 0.14);
+  --hover-tint-soft: rgba(242, 232, 220, 0.05);
+  --soft-bg: rgba(255, 244, 232, 0.08);
+  --card-bg: #3a3531;
+  --card-line: rgba(255, 244, 232, 0.08);
+  --rail-bg: rgba(38, 35, 32, 0.75);
+  --hairline-soft: rgba(242, 232, 220, 0.14);
+  --accent-text: #f2a58c;
+  --accent-soft: rgba(234, 122, 82, 0.18);
+  --warn-bg: rgba(232, 176, 75, 0.2);
+  --panel-bg: rgba(242, 232, 220, 0.08);
+  --panel-bg-soft: rgba(242, 232, 220, 0.06);
+  --panel-bg-strong: rgba(242, 232, 220, 0.12);
   --section-accent: var(--accent);
   --danger: #ff9a90;
-  --danger-bg: rgba(255, 154, 144, 0.12);
-  --danger-line: rgba(255, 154, 144, 0.38);
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
-  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.24);
-  --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.3);
+  --danger-bg: rgba(255, 154, 144, 0.14);
+  --danger-line: rgba(255, 154, 144, 0.4);
+  --shadow: 0 8px 30px rgba(0, 0, 0, 0.36);
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.3);
+  --shadow-float: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 button,
@@ -174,13 +183,13 @@ body.obs-mode .character-switcher {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 48px;
-  padding: 8px 12px;
+  min-height: 52px;
+  padding: 8px 14px 8px 8px;
   color: var(--ink);
-  background: var(--dock-bg-strong);
+  background: var(--panel-bg-strong);
   border: 1px solid var(--line);
   border-radius: 999px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-float);
   cursor: pointer;
 }
 
@@ -190,8 +199,8 @@ body.obs-mode .character-switcher {
 }
 
 .character-switcher-thumb {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   object-fit: cover;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -221,7 +230,7 @@ body.obs-mode .character-switcher {
 
 #activeCharacterSaveStatus {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 900;
 }
 
@@ -235,7 +244,7 @@ body.obs-mode .character-switcher {
   padding: 10px;
   background: var(--dock-bg-strong);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 20px;
   box-shadow: var(--shadow);
   backdrop-filter: blur(12px) saturate(135%);
   -webkit-backdrop-filter: blur(12px) saturate(135%);
@@ -328,6 +337,15 @@ body.obs-mode .character-switcher {
   color: var(--muted);
   font-size: 11px;
   font-weight: 900;
+  white-space: nowrap;
+}
+
+.character-card[aria-current="true"] .character-card-badge {
+  padding: 3px 9px;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  font-size: 10px;
 }
 
 .character-card-delete.icon-button {
@@ -336,12 +354,21 @@ body.obs-mode .character-switcher {
   min-width: 34px;
   min-height: 58px;
   height: auto;
+  background: rgba(196, 87, 63, 0.08);
+}
+
+body.stage-bg-dark .character-card-delete.icon-button {
+  background: rgba(255, 154, 144, 0.14);
 }
 
 .character-menu-actions {
   display: grid;
   gap: 8px;
   margin-top: 10px;
+}
+
+.character-menu-actions .ghost-button {
+  text-align: left;
 }
 
 .character-switcher.is-busy {
@@ -428,14 +455,14 @@ body.dock-hidden .control-card {
 }
 
 .nav-rail button:hover {
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--panel-bg-soft);
 }
 
 .nav-rail button[aria-pressed="true"] {
-  background: #fff;
+  background: var(--panel-bg-strong);
   color: var(--accent-text);
   font-weight: 900;
-  box-shadow: 0 2px 10px rgba(74, 58, 46, 0.12);
+  box-shadow: var(--shadow-card);
 }
 
 .nav-rail #dockHideButton {
@@ -576,7 +603,7 @@ h1 {
 }
 
 .ghost-button:hover {
-  background: rgba(74, 58, 46, 0.1);
+  background: var(--hover-tint);
 }
 
 .primary-button:active,
@@ -603,14 +630,14 @@ h1 {
 .muted-button {
   opacity: 1;
   color: var(--ink-soft);
-  background: #fff;
-  border: 1px solid rgba(74, 58, 46, 0.12);
-  box-shadow: 0 1px 2px rgba(74, 58, 46, 0.05);
+  background: var(--panel-bg-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
 }
 
 .muted-button:hover {
-  background: #fff;
-  border-color: rgba(74, 58, 46, 0.28);
+  background: var(--panel-bg-strong);
+  border-color: var(--line-strong);
 }
 
 .muted-button[aria-pressed="true"] {
@@ -682,8 +709,8 @@ body.dock-hidden .dock-peek-button {
   background: var(--dock-bg-strong);
   border: 1px solid var(--line);
   border-left: 5px solid var(--accent);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  border-radius: 20px;
+  box-shadow: var(--shadow-float);
   backdrop-filter: blur(12px) saturate(135%);
   -webkit-backdrop-filter: blur(12px) saturate(135%);
 }
@@ -693,6 +720,22 @@ body.dock-hidden .dock-peek-button {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--hairline-soft);
+}
+
+.character-wizard-step-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.character-wizard-step-prefix {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
 }
 
 .character-wizard-step {
@@ -1014,7 +1057,7 @@ select:focus {
 
 .color-preset-button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(60, 48, 38, 0.1);
+  box-shadow: var(--shadow-card);
 }
 
 .color-preset-button span {
@@ -1022,7 +1065,7 @@ select:focus {
   width: 100%;
   height: 18px;
   background: var(--preset-color, transparent);
-  border: 1px solid rgba(60, 48, 38, 0.16);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.38);
 }
@@ -1281,7 +1324,7 @@ body.stage-bg-dark .meter-threshold {
   display: flex;
   gap: 0;
   padding: 3px;
-  background: rgba(74, 58, 46, 0.06);
+  background: var(--soft-bg);
   border-radius: 12px;
 }
 
@@ -1309,13 +1352,9 @@ body.stage-bg-dark .meter-threshold {
 
 .segmented .obs-preset-button[aria-pressed="true"] {
   color: var(--accent-text);
-  background: #fff;
+  background: var(--panel-bg-strong);
   font-weight: 900;
   box-shadow: 0 1px 3px rgba(74, 58, 46, 0.14);
-}
-
-body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
-  background: var(--card-bg);
 }
 
 .note,
@@ -1501,7 +1540,7 @@ body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
 }
 
 .chip:hover {
-  background: rgba(74, 58, 46, 0.1);
+  background: var(--hover-tint);
 }
 
 .chip:active {
@@ -1520,14 +1559,14 @@ body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
 
 .chip-quiet {
   color: var(--ink-soft);
-  background: #fff;
-  border: 1px solid rgba(74, 58, 46, 0.12);
-  box-shadow: 0 1px 2px rgba(74, 58, 46, 0.05);
+  background: var(--panel-bg-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
 }
 
 .chip-quiet:hover {
-  background: #fff;
-  border-color: rgba(74, 58, 46, 0.28);
+  background: var(--panel-bg-strong);
+  border-color: var(--line-strong);
 }
 
 .chip-solid {
@@ -1550,7 +1589,7 @@ body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
   width: 1px;
   height: 22px;
   margin: 0 2px;
-  background: rgba(74, 58, 46, 0.12);
+  background: var(--line);
 }
 
 .live-readout {
@@ -1669,7 +1708,7 @@ body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
 }
 
 .accordion summary:hover {
-  background: rgba(74, 58, 46, 0.03);
+  background: var(--hover-tint-soft);
 }
 
 .accordion-caret {
@@ -1727,7 +1766,9 @@ body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
   align-items: center;
   justify-content: center;
   padding: clamp(4px, 1vw, 8px);
-  background: rgba(60, 48, 38, 0.42);
+  background: rgba(74, 58, 46, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
 }
 
 body.obs-mode .drawing-avatar-panel {
@@ -1746,18 +1787,31 @@ body.obs-mode .drawing-avatar-panel {
   max-height: 100%;
   background: var(--dock-bg-strong);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 22px;
   box-shadow: var(--shadow);
   overflow: hidden;
 }
 
 .drawing-avatar-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px 8px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
+}
+
+.drawing-avatar-header-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawing-avatar-header-actions .primary-button {
+  min-height: 40px;
+  padding: 0 16px;
+  white-space: nowrap;
 }
 
 .drawing-avatar-header h2 {
@@ -1866,7 +1920,7 @@ body.obs-mode .drawing-avatar-panel {
   overflow: hidden;
   background:
     repeating-conic-gradient(rgba(60, 48, 38, 0.1) 0% 25%, rgba(255, 255, 255, 0.65) 0% 50%)
-    0 0 / 26px 26px;
+    0 0 / 48px 48px;
 }
 
 #drawingAvatarCanvas,
@@ -1991,15 +2045,42 @@ body.obs-mode .drawing-avatar-panel {
 
 .drawing-tool-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 3px;
+  background: var(--soft-bg);
+  border-radius: 12px;
 }
 
 .drawing-tool-grid .ghost-button {
   padding: 0 8px;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.drawing-tool-grid .ghost-button:hover {
+  background: transparent;
+  color: var(--ink);
+}
+
+/* app.js は選択状態を .muted-button の付け外しで表現する（5019-5033行）ため、
+   クラス構造は変えずセレクタ側で「非muted=白面/muted=透明」を再現する。 */
+.drawing-tool-grid .ghost-button[aria-pressed="true"] {
+  color: var(--accent-text);
+  background: var(--panel-bg-strong);
+  box-shadow: 0 1px 3px rgba(74, 58, 46, 0.14);
+}
+
+.drawing-tool-grid .ghost-button.muted-button {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .drawing-color-swatches {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  justify-items: center;
   gap: 6px;
   margin-top: 8px;
 }
@@ -2008,28 +2089,26 @@ body.obs-mode .drawing-avatar-panel {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 0;
-  min-height: 38px;
-  padding: 4px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   color: var(--ink);
-  background: var(--panel-bg-soft);
-  border: 1.5px solid var(--line);
-  border-radius: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
   cursor: pointer;
 }
 
 .drawing-color-swatch[aria-pressed="true"] {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.16);
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .drawing-color-chip {
-  width: 100%;
-  height: 100%;
-  min-height: 24px;
-  flex: 1 1 auto;
-  border: 1px solid rgba(60, 48, 38, 0.24);
-  border-radius: 8px;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   background: var(--swatch-color, #3c3026);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
@@ -2219,10 +2298,22 @@ body.obs-mode .drawing-avatar-panel {
 
   .drawing-avatar-header {
     align-items: center;
+    padding: 8px 10px;
   }
 
   .drawing-avatar-header .small-note {
     display: none;
+  }
+
+  .drawing-avatar-header-actions {
+    gap: 6px;
+  }
+
+  .drawing-avatar-header-actions .primary-button,
+  .drawing-avatar-header-actions .ghost-button {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 11px;
   }
 
   .drawing-avatar-body {

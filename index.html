@@ -52,7 +52,10 @@
 
   <section id="characterWizardPanel" class="character-wizard-panel guide-panel" aria-label="新キャラ作成ウィザード" hidden>
     <div class="character-wizard-header">
-      <span id="characterWizardStepText" class="character-wizard-step">1 / 11</span>
+      <span class="character-wizard-step-group">
+        <span class="character-wizard-step-prefix" aria-hidden="true">STEP</span>
+        <span id="characterWizardStepText" class="character-wizard-step">1 / 11</span>
+      </span>
       <button id="characterWizardCancelButton" class="ghost-button muted-button" type="button">中止</button>
     </div>
     <h2 id="characterWizardTitle">顔の中心をクリック</h2>
@@ -818,7 +821,10 @@
           <h2>お絵描きで新キャラ作成</h2>
           <p id="drawingAvatarStatus" class="small-note" role="status" aria-live="polite">描く対象を選んで、キャンバスに描いてください。</p>
         </div>
-        <button id="drawingAvatarCancelButton" class="ghost-button muted-button" type="button">閉じる</button>
+        <div class="drawing-avatar-header-actions">
+          <button id="drawingAvatarFinishButton" class="primary-button" type="button">完成してキャラを作成</button>
+          <button id="drawingAvatarCancelButton" class="ghost-button muted-button" type="button">閉じる</button>
+        </div>
       </header>
       <div class="drawing-avatar-body">
         <div class="drawing-avatar-canvas-area">
@@ -937,8 +943,7 @@
               <span>完成</span>
               <strong>6差分を自動生成</strong>
             </div>
-            <p class="small-note">完成すると顔ベース+目+口から6枚の表情PNGを自動合成します。口パク用に「口・閉じ」「口・中間」「口・開け」は別々に描いてください。</p>
-            <button id="drawingAvatarFinishButton" class="primary-button full-width-button" type="button">完成してキャラを作成</button>
+            <p class="small-note">完成すると顔ベース+目+口から6枚の表情PNGを自動合成します。口パク用に「口・閉じ」「口・中間」「口・開け」は別々に描いてください。上の「完成してキャラを作成」から書き出せます。</p>
           </section>
         </div>
       </div>
