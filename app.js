@@ -93,6 +93,7 @@
   const DRAWING_AVATAR_CANVAS_HEIGHT = 1536;
   const DRAWING_AVATAR_MAX_ITEM_LAYERS = 8;
   const DRAWING_AVATAR_MAX_HISTORY = 30;
+  const DRAWING_AVATAR_MAX_HISTORY_BYTES = 96 * 1024 * 1024; // undo+redo 合計のフルキャンバス snapshot 保持量の上限（メモリ膨張の抑制）。
   const DRAWING_AVATAR_ONION_ALPHA = 0.35;
   const DRAWING_AVATAR_FILL_TOLERANCE = 12;
   // 目・口は「開き」の初期表示に合わせて、閉じ・中間・開けの差分レイヤーを最初はミュートにする。
@@ -1454,9 +1455,15 @@
       if (data.length > 0xffffffff) {
         throw new Error(`ZIP内ファイルが大きすぎます: ${safePath}`);
       }
+      const nameBytes = textToU8(safePath);
+      if (nameBytes.length > 0xffff) {
+        // ローカル/セントラルヘッダのファイル名長は16bit。超過すると
+        // setUint16 が下位16bitのみ書き込み、壊れたZIPをサイレント出力してしまう。
+        throw new Error(`ZIP内のパス名が長すぎます: ${safePath}`);
+      }
       return {
         path: safePath,
-        nameBytes: textToU8(safePath),
+        nameBytes,
         data,
         crc: crc32(data),
       };
@@ -1738,6 +1745,26 @@
     return { w, h };
   }
 
+  function validateItemImageU8(u8, name = "PNGアイテム") {
+    // ファイルピッカー経由（MAX_ITEM_IMAGE_FILE_SIZE + validateItemImageDimensions）と
+    // 上限を揃えるため、.purupuru パッケージ内アイテムもデコード前に検証する。
+    if (u8.length > MAX_ITEM_IMAGE_FILE_SIZE) {
+      const maxMbText = Math.floor(MAX_ITEM_IMAGE_FILE_SIZE / (1024 * 1024));
+      throw new Error(`${name} のファイルサイズが大きすぎます。${maxMbText}MB以下のPNGにしてください。`);
+    }
+    const { w, h } = pngU8Dimensions(u8, name);
+    if (
+      w <= 0 ||
+      h <= 0 ||
+      w > MAX_ITEM_IMAGE_EDGE ||
+      h > MAX_ITEM_IMAGE_EDGE ||
+      w * h > MAX_ITEM_IMAGE_PIXELS
+    ) {
+      const maxPixelsText = `${Math.floor(MAX_ITEM_IMAGE_PIXELS / 10000)}万`;
+      throw new Error(`${name} は画像サイズが大きすぎます。長辺${MAX_ITEM_IMAGE_EDGE}px以内・合計${maxPixelsText}画素以内のPNGにしてください。`);
+    }
+  }
+
   function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
     return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
   }
@@ -2016,7 +2043,7 @@
         const itemPath = assertSafePackagePath(layer.file);
         const itemU8 = unzipped[itemPath];
         if (!itemU8) return layer;
-        assertPngU8(itemU8, itemPath);
+        validateItemImageU8(itemU8, itemPath);
         const id = String(layer.id ?? index + 1);
         itemImageBlobs[id] = {
           blob: pngU8ToBlob(itemU8),
@@ -4076,7 +4103,7 @@
       console.warn("キャラ自動保存に失敗しました。", error, reason);
       updateCharacterSaveStatus("保存失敗");
       try {
-        await patchCharacterProfile(activeCharacterId, { lastError: error instanceof Error ? error.message : "保存に失敗しました。" });
+        await patchCharacterProfile(saveCharacterId, { lastError: error instanceof Error ? error.message : "保存に失敗しました。" });
       } catch {
         // 保存失敗情報の保存にも失敗した場合はUI表示だけで続行する。
       }
@@ -4127,8 +4154,11 @@
       previousRecord = previousId ? await getCharacterProfile(previousId) : null;
       const nextRecord = await getCharacterProfile(nextId);
       if (!nextRecord) throw new Error("切り替え先キャラが見つかりません。");
-      await loadAvatarImagesFromProfileRecord(nextRecord);
-      await hydrateProfileSettingsPayload(nextRecord);
+      // applyCharacterProfileRecord は内部で素材ロードと設定 hydrate を行い、
+      // いずれも状態を変異させる前（applyLoadedAvatarImages より手前）に実行されるため、
+      // ここで事前ロードしなくても素材不足・不正 PNG は変異前に fail-fast できる。
+      // 以前は同じ処理をここで先行実行しており、キャラ切り替えのたびに全 PNG デコードと
+      // アイテム Blob→DataURL 変換が二重に走っていたため削除した。
       await applyCharacterProfileRecord(nextRecord, { preserveGlobalRuntime: true });
       activeCharacterId = nextId;
       rememberActiveCharacterId(nextId);
@@ -5201,6 +5231,10 @@
     const session = drawingAvatarSession;
     const layer = drawingAvatarLayerById(id);
     if (!session || !layer || layer.kind !== "item") return;
+    // 削除は undo 対象外（クリアと異なり元に戻せない）ため、誤操作による描き込み消失を防ぐ確認を挟む。
+    if (typeof window.confirm === "function" && !window.confirm(`${layer.label} を削除します。この操作は元に戻せません。よろしいですか？`)) {
+      return;
+    }
     session.layers = session.layers.filter((entry) => entry.id !== id);
     session.undoStack = session.undoStack.filter((entry) => entry.layerId !== id);
     session.redoStack = session.redoStack.filter((entry) => entry.layerId !== id);
@@ -5332,12 +5366,37 @@
     };
   }
 
-  function pushDrawingAvatarUndo(layer) {
+  function drawingAvatarHistoryEntryBytes(entry) {
+    // 新形式は entry.image.imageData、旧形式は entry.image が ImageData。
+    const data = entry?.image?.imageData?.data || entry?.image?.data;
+    return data?.byteLength || 0;
+  }
+
+  function enforceDrawingAvatarHistoryBudget(session) {
+    if (!session) return;
+    const totalBytes = () =>
+      session.undoStack.reduce((sum, entry) => sum + drawingAvatarHistoryEntryBytes(entry), 0) +
+      session.redoStack.reduce((sum, entry) => sum + drawingAvatarHistoryEntryBytes(entry), 0);
+    // 古い undo から順に破棄（最低1件は残す）。それでも超過するなら redo を古い順に破棄する。
+    while (totalBytes() > DRAWING_AVATAR_MAX_HISTORY_BYTES && session.undoStack.length > 1) {
+      session.undoStack.shift();
+    }
+    while (totalBytes() > DRAWING_AVATAR_MAX_HISTORY_BYTES && session.redoStack.length > 0) {
+      session.redoStack.shift();
+    }
+  }
+
+  function pushDrawingAvatarUndoSnapshot(layerId, snapshot) {
     const session = drawingAvatarSession;
     if (!session) return;
-    session.undoStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+    session.undoStack.push({ layerId, image: snapshot });
     if (session.undoStack.length > DRAWING_AVATAR_MAX_HISTORY) session.undoStack.shift();
     session.redoStack.length = 0;
+    enforceDrawingAvatarHistoryBudget(session);
+  }
+
+  function pushDrawingAvatarUndo(layer) {
+    pushDrawingAvatarUndoSnapshot(layer.id, drawingAvatarSnapshotLayer(layer));
   }
 
   function applyDrawingAvatarHistory(fromStack, toStack) {
@@ -5348,6 +5407,8 @@
       const layer = drawingAvatarLayerById(entry.layerId);
       if (!layer) continue;
       toStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+      if (toStack.length > DRAWING_AVATAR_MAX_HISTORY) toStack.shift();
+      enforceDrawingAvatarHistoryBudget(session);
       if (entry.image?.imageData) {
         layer.ctx.putImageData(entry.image.imageData, 0, 0);
         layer.importedImages = cloneDrawingAvatarImportedImages(
@@ -5621,12 +5682,14 @@
     ensureDrawingAvatarLayerVisible(layer);
     if (session.tool === "fill") {
       if (point.x < 0 || point.x >= DRAWING_AVATAR_CANVAS_WIDTH || point.y < 0 || point.y >= DRAWING_AVATAR_CANVAS_HEIGHT) return;
-      pushDrawingAvatarUndo(layer);
+      // 変化を確定させてから undo に積む。先に push すると redoStack がクリアされ、
+      // 「同じ色で無変化」だった場合にやり直し履歴が失われてしまう。
+      const snapshotBefore = drawingAvatarSnapshotLayer(layer);
       const changed = drawingAvatarFloodFill(layer, point);
       if (!changed) {
-        session.undoStack.pop();
         setDrawingAvatarStatus("同じ色のため塗りつぶしませんでした。別の色を選ぶか、別の場所をクリックしてください。");
       } else {
+        pushDrawingAvatarUndoSnapshot(layer.id, snapshotBefore);
         setDrawingAvatarStatus(`${layer.label} を ${session.color} で塗りつぶしました。`);
       }
       updateDrawingAvatarUi({ rebuildList: false });
@@ -6522,10 +6585,21 @@
     obsInputPostPending = true;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), OBS_INPUT_FETCH_TIMEOUT_MS);
+    let requestBody;
+    try {
+      // payload 生成が同期例外を投げると fetch の .finally() に到達せず
+      // obsInputPostPending が立ちっぱなしになり以降の送信が恒久停止するため、
+      // 送信前にここで組み立てて確実に解除できるようにする。
+      requestBody = JSON.stringify(buildObsInputPayload(nowMs));
+    } catch (error) {
+      clearTimeout(timeoutId);
+      obsInputPostPending = false;
+      return;
+    }
     fetch("/api/obs/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildObsInputPayload(nowMs)),
+      body: requestBody,
       signal: controller.signal,
     })
       .then((response) => {
@@ -12673,6 +12747,8 @@
     requestMainAnimationFrame();
   }
 
+  let lastTickErrorLogAt = 0;
+  const TICK_ERROR_LOG_INTERVAL_MS = 2000;
   function tick(timestamp) {
     try {
       const obsFrameInterval = OBS_MODE ? 1000 / currentObsRenderFps() : 0;
@@ -12747,8 +12823,13 @@
       updateHighlightPulse(delta);
       render();
     } catch (error) {
-      console.error("[tick] animation loop error:", error);
-      setStatus("error");
+      // 恒常的な例外時に 60fps でログ/DOM 更新を垂れ流さないようスロットルする。
+      const errorNow = (typeof performance !== "undefined" && performance.now) ? performance.now() : timestamp || 0;
+      if (errorNow - lastTickErrorLogAt > TICK_ERROR_LOG_INTERVAL_MS) {
+        lastTickErrorLogAt = errorNow;
+        console.error("[tick] animation loop error:", error);
+        setStatus("error");
+      }
     } finally {
       requestMainAnimationFrame();
     }

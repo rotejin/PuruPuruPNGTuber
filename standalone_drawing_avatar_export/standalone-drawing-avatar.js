@@ -16,6 +16,8 @@
   const MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
   const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
   const PNG_BASE64_SIGNATURE = "iVBORw0KGgo";
+  const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const MAX_PROJECT_JSON_DEPTH = 16;
   const DEFAULT_MUTED = new Set(["eyesClosed", "mouthHalf", "mouthOpen"]);
   const FIXED = [
     ["faceBase", "顔ベース"],
@@ -952,11 +954,27 @@
     requestAnimationFrame(() => revokeProjectObjectUrl(url));
     dirty = false; say("プロジェクトJSONを書き出しました。");
   }
+  function sanitizeProjectJson(value, depth = 0) {
+    // 本体アプリの sanitizeImportedJsonValue と同様に、外部 JSON の危険キーを除去し
+    // プロトタイプ汚染を無効化する。null プロトタイプのオブジェクトへ own-property のみ移し替える。
+    if (depth > MAX_PROJECT_JSON_DEPTH) throw new Error("プロジェクトJSONの階層が深すぎます。");
+    if (Array.isArray(value)) return value.map((item) => sanitizeProjectJson(item, depth + 1));
+    if (value && typeof value === "object") {
+      const clean = Object.create(null);
+      for (const key of Object.keys(value)) {
+        if (FORBIDDEN_JSON_KEYS.has(key)) continue;
+        clean[key] = sanitizeProjectJson(value[key], depth + 1);
+      }
+      return clean;
+    }
+    return value;
+  }
+
   async function loadProject(file) {
     if (!file) return;
     try {
       if (file.size > MAX_PROJECT_FILE_SIZE) throw new Error("プロジェクトJSONが大きすぎます。");
-      await restore(JSON.parse(await file.text()));
+      await restore(sanitizeProjectJson(JSON.parse(await file.text())));
       dirty = false;
     }
     catch (e) { console.warn(e); say(e instanceof Error ? e.message : "プロジェクト読込に失敗しました。"); }
