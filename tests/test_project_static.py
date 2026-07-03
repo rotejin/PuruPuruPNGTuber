@@ -650,9 +650,12 @@ class ProjectStaticTests(unittest.TestCase):
         warp_body = self.js_function_body(app, "function hairWarpPoint(")
 
         # ★5: 毛先ほど減衰比を下げ、ハリのあるオーバーシュートを許容する。
-        self.assertIn("const c1 = lerp(24, 7.5, t) * damping", spring_body)
-        self.assertIn("const c2 = lerp(29, 12, t) * damping", spring_body)
-        self.assertIn("const cP = lerp(21, 6.5, t) * damping", spring_body)
+        self.assertIn("const k1 = lerp(190, 100, t) * stiffness", spring_body)
+        self.assertIn("const c1 = lerp(24, 9, t) * damping", spring_body)
+        self.assertIn("const k2 = lerp(260, 170, t) * stiffness", spring_body)
+        self.assertIn("const c2 = lerp(29, 13, t) * damping", spring_body)
+        self.assertIn("const kP = lerp(132, 56, t) * stiffness", spring_body)
+        self.assertIn("const cP = lerp(21, 6.7, t) * damping", spring_body)
 
         # ★6: angle/head だけ follow-the-leader 化し、wave は段ごとのターゲットを維持する。
         self.assertIn("const HAIR_CHAIN_FOLLOW = 0.68", app)
