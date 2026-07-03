@@ -258,6 +258,8 @@
     opacity: 100,
     followStrength: 100,
     deformFollowEnabled: false,
+    depthEnabled: false,
+    depth: 40,
     visible: true,
     locked: false,
   };
@@ -268,6 +270,7 @@
     y: { min: -3000, max: 3000 },
     opacity: { min: 10, max: 100 },
     followStrength: { min: 0, max: 200 },
+    depth: { min: 0, max: 100 },
   };
   const ITEM_HIT_ORDER = ["stageFront", "frontHairFront", "faceFront", "faceBack", "characterBack", "stageBack"];
   const ALL_SETTINGS_NUMERIC_KEYS = [
@@ -568,6 +571,8 @@
     itemSlotSelect: document.querySelector("#itemSlotSelect"),
     itemDeformFollowEnabled: document.querySelector("#itemDeformFollowEnabled"),
     itemFollowStrength: document.querySelector("#itemFollowStrength"),
+    itemDepthEnabled: document.querySelector("#itemDepthEnabled"),
+    itemDepth: document.querySelector("#itemDepth"),
     itemScale: document.querySelector("#itemScale"),
     itemRotation: document.querySelector("#itemRotation"),
     itemX: document.querySelector("#itemX"),
@@ -2220,6 +2225,8 @@
       ui.itemSlotSelect,
       ui.itemDeformFollowEnabled,
       ui.itemFollowStrength,
+      ui.itemDepthEnabled,
+      ui.itemDepth,
       ui.itemScale,
       ui.itemRotation,
       ui.itemX,
@@ -2249,6 +2256,8 @@
       opacity: layer.opacity,
       followStrength: layer.followStrength,
       deformFollowEnabled: Boolean(layer.deformFollowEnabled),
+      depthEnabled: Boolean(layer.depthEnabled),
+      depth: layer.depth,
       visible: Boolean(layer.visible),
       locked: Boolean(layer.locked),
     };
@@ -2579,6 +2588,7 @@
         itemSlotInfo(layer.slot).label,
         `${Math.round(layer.scale)}%`,
         layer.deformFollowEnabled && itemLayerSupportsDeformFollow(layer) ? "変形連動" : null,
+        itemLayerDepthFollowActive(layer) ? "深度演出" : null,
         layer.visible ? null : "非表示",
         layer.locked ? "ロック中" : null,
       ].filter(Boolean).join(" / ");
@@ -2645,6 +2655,17 @@
         itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !canRigidFollow || deformFollowActive;
     }
     setRangeControlValue("itemFollowStrength", Math.round(layer.followStrength));
+    const canDepthFollow = Boolean(activeLayer && itemLayerSupportsDepthFollow(layer));
+    const depthFollowActive = Boolean(layer.depthEnabled && canDepthFollow && !deformFollowActive);
+    if (ui.itemDepthEnabled) {
+      ui.itemDepthEnabled.checked = depthFollowActive;
+      ui.itemDepthEnabled.disabled =
+        itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !canDepthFollow || deformFollowActive;
+    }
+    if (ui.itemDepth) {
+      ui.itemDepth.disabled = itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !depthFollowActive;
+    }
+    setRangeControlValue("itemDepth", Math.round(layer.depth));
     setRangeControlValue("itemScale", Math.round(layer.scale));
     setRangeControlValue("itemRotation", Math.round(layer.rotation), "°");
     setRangeControlValue("itemX", Math.round(layer.x), "px");
@@ -2720,6 +2741,7 @@
       x: Math.round(clamp(source.x + 28, -3000, 3000)),
       y: Math.round(clamp(source.y + 28, -3000, 3000)),
       locked: false,
+      depthMotion: null,
     };
     itemLayers.splice(sourceIndex + 1, 0, layer);
     nextItemLayerId += 1;
@@ -2770,6 +2792,13 @@
         ITEM_LAYER_LIMITS.followStrength.max
       ),
       deformFollowEnabled: Boolean(layerData?.deformFollowEnabled),
+      depthEnabled: Boolean(layerData?.depthEnabled),
+      depth: normalizeItemNumber(
+        layerData?.depth,
+        ITEM_LAYER_DEFAULTS.depth,
+        ITEM_LAYER_LIMITS.depth.min,
+        ITEM_LAYER_LIMITS.depth.max
+      ),
       visible: layerData?.visible !== false,
       locked: Boolean(layerData?.locked),
     };
@@ -3737,6 +3766,8 @@
           layer.opacity,
           layer.followStrength,
           Boolean(layer.deformFollowEnabled),
+          Boolean(layer.depthEnabled),
+          layer.depth,
           layer.visible !== false,
           Boolean(layer.locked),
           imageSignature,
@@ -10703,6 +10734,55 @@
     return slot.anchor === "character" && Boolean(slot.rigidFollow);
   }
 
+  function itemLayerSupportsDepthFollow(layer) {
+    const slot = itemSlotInfo(layer?.slot);
+    return slot.anchor === "character" && !slot.rigidFollow;
+  }
+
+  function itemLayerDepthFollowActive(layer) {
+    if (!layer?.depthEnabled || !itemLayerSupportsDepthFollow(layer)) return false;
+    if (layer.deformFollowEnabled && itemLayerSupportsDeformFollow(layer)) return false;
+    return true;
+  }
+
+  function itemLayerDepthOffset(layer) {
+    if (!itemLayerDepthFollowActive(layer) || !layer.depthMotion) return { x: 0, y: 0 };
+    return { x: layer.depthMotion.x, y: layer.depthMotion.y };
+  }
+
+  function itemDepthHeadMotionVector() {
+    const center = currentFaceCenter();
+    const followed = faceRigidFollowPoint(center.x, center.y);
+    return { x: followed.x - center.x, y: followed.y - center.y };
+  }
+
+  // 体パーツ向けの深度演出: 顔の動きベクトルを奥行きに応じて減衰させ、
+  // バネ-ダンパーで遅延・揺り戻しを付けたパララックス追従。
+  function updateItemDepthMotion(delta) {
+    let head = null;
+    for (const layer of itemLayers) {
+      if (!itemLayerDepthFollowActive(layer)) {
+        if (layer.depthMotion) layer.depthMotion = null;
+        continue;
+      }
+      if (!head) head = itemDepthHeadMotionVector();
+      const depth =
+        clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
+      // 浅いほど強く追従し、深いほど動きが小さく・ゆっくりになる。
+      const followRate = lerp(0.34, 0.08, depth);
+      const stiffness = lerp(90, 26, depth);
+      const damping = 2 * 0.8 * Math.sqrt(stiffness); // ダンピング比0.8で軽い揺り戻し
+      const motion = layer.depthMotion || (layer.depthMotion = { x: 0, y: 0, vx: 0, vy: 0 });
+      const targetX = head.x * followRate;
+      const targetY = head.y * followRate * 0.85;
+      const dt = clamp(delta, 0, 1 / 30);
+      motion.vx += (stiffness * (targetX - motion.x) - damping * motion.vx) * dt;
+      motion.vy += (stiffness * (targetY - motion.y) - damping * motion.vy) * dt;
+      motion.x += motion.vx * dt;
+      motion.y += motion.vy * dt;
+    }
+  }
+
   function itemLayerDeformFollowSpec(layer) {
     if (!layer?.deformFollowEnabled || !itemLayerSupportsDeformFollow(layer)) return null;
     const slot = itemSlotInfo(layer.slot);
@@ -10749,7 +10829,8 @@
     const deformSpec = itemLayerDeformFollowSpec(layer);
     if (deformSpec) return deformSpec.warpFn(center.x, center.y);
     const offset = itemLayerRigidFollowOffset(layer);
-    return { x: center.x + offset.x, y: center.y + offset.y };
+    const depthOffset = itemLayerDepthOffset(layer);
+    return { x: center.x + offset.x + depthOffset.x, y: center.y + offset.y + depthOffset.y };
   }
 
   function itemLayerRenderedAnchorPoint(layer, anchorPoint) {
@@ -10757,7 +10838,8 @@
     const deformSpec = itemLayerDeformFollowSpec(layer);
     if (deformSpec) return deformSpec.warpFn(anchorPoint.x, anchorPoint.y);
     const offset = itemLayerRigidFollowOffset(layer);
-    return { x: anchorPoint.x + offset.x, y: anchorPoint.y + offset.y };
+    const depthOffset = itemLayerDepthOffset(layer);
+    return { x: anchorPoint.x + offset.x + depthOffset.x, y: anchorPoint.y + offset.y + depthOffset.y };
   }
 
   function itemAnchorPointToStage(layer, anchorPoint) {
@@ -10773,7 +10855,8 @@
     if (!charPoint) return null;
     if (itemLayerDeformFollowSpec(layer)) return charPoint;
     const offset = itemLayerRigidFollowOffset(layer);
-    return { x: charPoint.x - offset.x, y: charPoint.y - offset.y };
+    const depthOffset = itemLayerDepthOffset(layer);
+    return { x: charPoint.x - offset.x - depthOffset.x, y: charPoint.y - offset.y - depthOffset.y };
   }
 
   function itemLayerAnchorToLocal(layer, anchorPoint) {
@@ -12514,6 +12597,7 @@
       publishObsInput(timestamp);
       advanceBlinkEvent(timestamp);
       updateHairPhysics(delta);
+      updateItemDepthMotion(delta);
       updateHighlightPulse(delta);
       render();
     } catch (error) {
@@ -13173,6 +13257,17 @@
       updateItemLayerUi();
       markActiveCharacterDirty("settings", "item-deform-follow");
     });
+    ui.itemDepthEnabled?.addEventListener("change", () => {
+      if (blockItemMutationWhileActive()) return;
+      const layer = activeItemLayer();
+      if (!layer || layer.locked || !itemLayerSupportsDepthFollow(layer)) return;
+      layer.depthEnabled = ui.itemDepthEnabled.checked;
+      if (!layer.depthEnabled) layer.depthMotion = null;
+      itemHandleVisible = true;
+      updateItemLayerUi();
+      markActiveCharacterDirty("settings", "item-depth-follow");
+    });
+    ui.itemDepth?.addEventListener("input", () => setItemLayerValue("depth", Number(ui.itemDepth.value)));
     ui.itemScale?.addEventListener("input", () => setItemLayerValue("scale", Number(ui.itemScale.value)));
     ui.itemFollowStrength?.addEventListener("input", () => setItemLayerValue("followStrength", Number(ui.itemFollowStrength.value)));
     ui.itemRotation?.addEventListener("input", () => setItemLayerValue("rotation", Number(ui.itemRotation.value)));
