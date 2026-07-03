@@ -38,10 +38,10 @@
     <div id="characterSwitcherMenu" class="character-switcher-menu" role="menu" hidden>
       <div id="characterList" class="character-list"></div>
       <div class="character-menu-actions">
-        <button id="addCharacterButton" class="ghost-button" type="button">＋ ファイルから追加</button>
+        <button id="addCharacterButton" class="ghost-button" type="button">ファイルから追加（.purupuru）</button>
         <button id="drawingAvatarMenuButton" class="ghost-button" type="button">＋ お絵描きで新キャラ作成</button>
         <button id="drawingAvatarEditButton" class="ghost-button muted-button" type="button" hidden>お絵描きキャラを書き直す</button>
-        <button id="duplicateCharacterButton" class="ghost-button muted-button" type="button">現在のキャラを複製</button>
+        <button id="duplicateCharacterButton" class="ghost-button muted-button" type="button">今のキャラを複製</button>
       </div>
     </div>
     <input id="addCharacterFileInput" type="file" accept=".purupuru,application/zip,application/x-zip-compressed" hidden />
@@ -58,6 +58,7 @@
       </span>
       <button id="characterWizardCancelButton" class="ghost-button muted-button" type="button">中止</button>
     </div>
+    <div class="character-wizard-progress" aria-hidden="true"><span id="characterWizardProgressFill"></span></div>
     <h2 id="characterWizardTitle">顔の中心をクリック</h2>
     <p id="characterWizardDescription" class="small-note">キャンバス上のガイドに沿って点を置いてください。</p>
     <p id="characterWizardStatus" class="small-note character-wizard-status" role="status" aria-live="polite">顔の中心をキャンバス上でクリックしてください。</p>
@@ -112,7 +113,7 @@
       </button>
       <button id="idleMotionButton" class="chip" type="button" aria-pressed="false">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 12c2-4.5 4-4.5 6 0s4 4.5 6 0"></path></svg>
-        <span class="chip-label">待機モーション OFF</span>
+        <span class="chip-label">待機ゆれ OFF</span>
       </button>
       <i class="chip-divider" aria-hidden="true"></i>
       <button id="centerButton" class="chip chip-quiet" type="button">
@@ -203,8 +204,8 @@
         <p class="small-note">PNG素材がなくても、ブラウザ上で顔・目・口・髪を描いてそのままアバターにできます。</p>
       </section>
       <div class="snapshot-row">
-        <button id="saveSnapshotButton" class="ghost-button" type="button">調整前を保存</button>
-        <button id="restoreSnapshotButton" class="ghost-button muted-button" type="button">調整前に戻す</button>
+        <button id="saveSnapshotButton" class="ghost-button" type="button">今の状態を保存</button>
+        <button id="restoreSnapshotButton" class="ghost-button muted-button" type="button">保存した状態に戻す</button>
       </div>
       <section class="panel guide-panel is-basic-panel">
         <div class="panel-title">
@@ -227,19 +228,19 @@
             <output for="avatarSize">120%</output>
           </label>
           <label class="control-row">
-            <span>呼吸・揺れ<small>ゆっくりした待機モーション</small></span>
+            <span>呼吸・ゆれ<small>ゆっくりした待機モーション</small></span>
             <input id="breathStrength" type="range" min="0" max="100" value="40" />
             <output for="breathStrength">40%</output>
           </label>
           <label class="control-row">
-            <span>首傾け<small>アイドル時の頭の傾き</small></span>
+            <span>首かしげ<small>アイドル時の頭の傾き</small></span>
             <input id="rollStrength" type="range" min="0" max="100" value="1" />
             <output for="rollStrength">1%</output>
           </label>
           <button id="resetPositionButton" class="ghost-button full-width-button" type="button">位置とサイズを戻す</button>
           <p class="small-note">キャラ本体をドラッグで移動、キャラ上ホイールで拡大縮小できます。</p>
         </section>
-        <p class="see-points">見るポイント: 画面中央にキャラが収まっているか ／ 顔や手が見切れていないか ／ 呼吸・揺れが大きすぎて目立たないか ／ 首傾けが強すぎて不自然でないか</p>
+        <p class="see-points">チェック：画面中央にキャラが収まっているか ／ 顔や手が見切れていないか ／ 呼吸・揺れが大きすぎて目立たないか ／ 首傾けが強すぎて不自然でないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="layout">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="face" hidden>
@@ -324,20 +325,20 @@
             </label>
             <button id="diagonalFaceWarpButton" class="ghost-button full-width-button" type="button" aria-pressed="true">斜め補正 ON</button>
             <div class="simple-grid">
-              <button id="faceDepthSetupButton" class="ghost-button" type="button" aria-pressed="false">奥行き点編集 OFF</button>
-              <button id="faceDepthAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
+              <button id="faceDepthSetupButton" class="ghost-button" type="button" aria-pressed="false">点を編集 OFF</button>
+              <button id="faceDepthAutoButton" class="ghost-button muted-button" type="button">自動でおまかせ</button>
             </div>
             <button id="faceDepthSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">奥行き点を保存</button>
             <p id="faceDepthSetupStatus" class="small-note">左目・右目・鼻・口・顎の5点を合わせると、立体顔補正のズレを抑えられます。</p>
             <div class="simple-grid">
-              <button id="neckPivotSetupButton" class="ghost-button" type="button" aria-pressed="false">首支点編集 OFF</button>
-              <button id="neckPivotAutoButton" class="ghost-button muted-button" type="button">推定配置</button>
+              <button id="neckPivotSetupButton" class="ghost-button" type="button" aria-pressed="false">首の支点を編集 OFF</button>
+              <button id="neckPivotAutoButton" class="ghost-button muted-button" type="button">自動でおまかせ</button>
             </div>
             <button id="neckPivotSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">首支点を保存</button>
             <p id="neckPivotSetupStatus" class="small-note">首の付け根に支点を置くと、首元を残して頭が動くように見えます。</p>
           </div>
         </details>
-        <p class="see-points">見るポイント: 左右で目や口が潰れすぎないか ／ 下向きで顎が伸びすぎないか ／ 上向きで顔が膨らみすぎないか ／ 前髪と顔のズレが目立たないか</p>
+        <p class="see-points">チェック：左右で目や口が潰れすぎないか ／ 下向きで顎が伸びすぎないか ／ 上向きで顔が膨らみすぎないか ／ 前髪と顔のズレが目立たないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="face">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="mouth" hidden>
@@ -385,7 +386,7 @@
             <output for="pyokoStrength">15%</output>
           </label>
         </section>
-        <p class="see-points">見るポイント: 普通の声で半開きになるか ／ 大きい声で全開になるか ／ 無音時にすぐ閉じすぎないか ／ 喋るたびに跳ねすぎないか</p>
+        <p class="see-points">チェック：普通の声で半開きになるか ／ 大きい声で全開になるか ／ 無音時にすぐ閉じすぎないか ／ 喋るたびに跳ねすぎないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="mouth">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="eyes" hidden>
@@ -399,8 +400,8 @@
             <strong>瞳中心</strong>
           </div>
           <div class="simple-grid">
-            <button id="eyeSetupButton" class="ghost-button" type="button" aria-pressed="false">瞳位置編集 OFF</button>
-            <button id="eyeAutoDetectButton" class="ghost-button muted-button" type="button">推定配置</button>
+            <button id="eyeSetupButton" class="ghost-button" type="button" aria-pressed="false">瞳の位置を編集 OFF</button>
+            <button id="eyeAutoDetectButton" class="ghost-button muted-button" type="button">自動でおまかせ</button>
           </div>
           <label class="control-row">
             <span>うるみ範囲 横<small>歪みの横幅</small></span>
@@ -436,8 +437,8 @@
             <span>目ハイライトを表示</span>
           </label>
           <div class="simple-grid">
-            <button id="highlightSetupButton" class="ghost-button" type="button" aria-pressed="false">ハイライト配置 OFF</button>
-            <button id="highlightAutoPlaceButton" class="ghost-button muted-button" type="button">自動配置</button>
+            <button id="highlightSetupButton" class="ghost-button" type="button" aria-pressed="false">ハイライトを配置 OFF</button>
+            <button id="highlightAutoPlaceButton" class="ghost-button muted-button" type="button">自動でおまかせ</button>
           </div>
           <label class="control-row">
             <span>光の強さ<small>白いハイライトの濃さ</small></span>
@@ -481,7 +482,7 @@
             </label>
           </div>
           <button id="highlightSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">ハイライト位置を保存</button>
-          <p id="highlightSetupStatus" class="small-note">通常はPNG不要です。白い光は自動配置され、ズレる時だけハイライト配置ONで調整します。</p>
+          <p id="highlightSetupStatus" class="small-note">通常はPNG不要です。白い光は自動配置され、ズレる時だけハイライトを配置ONで調整します。</p>
         </section>
 
         <section class="panel is-visual-panel">
@@ -500,7 +501,7 @@
           </label>
           <p class="small-note">目ハイライトをOFFにしても、涙レンズ歪みは独立して動きます。</p>
         </section>
-        <p class="see-points">見るポイント: まばたきでハイライトが潰れすぎないか ／ ハイライトが黒目からズレていないか ／ うるみが強すぎてギョロつかないか ／ 左右の目の傾きが揃っているか</p>
+        <p class="see-points">チェック：まばたきでハイライトが潰れすぎないか ／ ハイライトが黒目からズレていないか ／ うるみが強すぎてギョロつかないか ／ 左右の目の傾きが揃っているか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="eyes">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="hair" hidden>
@@ -545,13 +546,13 @@
             </select>
           </label>
           <div class="simple-grid">
-            <button id="hairBundleSetupButton" class="ghost-button" type="button" aria-pressed="false">髪束編集 OFF</button>
+            <button id="hairBundleSetupButton" class="ghost-button" type="button" aria-pressed="false">髪束を編集 OFF</button>
             <button id="hairBundleTemplateButton" class="ghost-button muted-button" type="button">標準テンプレ</button>
           </div>
           <button id="hairBundleSetupSaveButton" class="ghost-button muted-button full-width-button" type="button">髪束を保存</button>
-          <p id="hairBundleSetupStatus" class="small-note">髪束編集ONで、線に「前髪 左」「横髪 右」「後ろ髪 中央」などのラベルが出ます。迷う時は髪束の表示を「前髪だけ」などに絞れます。</p>
+          <p id="hairBundleSetupStatus" class="small-note">髪束を編集ONで、線に「前髪 左」「横髪 右」「後ろ髪 中央」などのラベルが出ます。迷う時は髪束の表示を「前髪だけ」などに絞れます。</p>
         </section>
-        <p class="see-points">見るポイント: 顔の動きより少し遅れて髪が動くか ／ 髪がゴムのように伸びすぎないか ／ 前髪だけ変に揺れていないか ／ 後ろ髪が一枚板に見えないか</p>
+        <p class="see-points">チェック：顔の動きより少し遅れて髪が動くか ／ 髪がゴムのように伸びすぎないか ／ 前髪だけ変に揺れていないか ／ 後ろ髪が一枚板に見えないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="hair">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="look" hidden>
@@ -639,7 +640,7 @@
             <output for="neckShadowDistance">12px</output>
           </label>
         </section>
-        <p class="see-points">見るポイント: 前髪影が濃すぎて顔が汚くなっていないか ／ 背景色がクロマキー抜きで残らないか ／ 髪色が元のPNGと極端に変わっていないか ／ パステルにしても白飛びしないか</p>
+        <p class="see-points">チェック：前髪影が濃すぎて顔が汚くなっていないか ／ 背景色がクロマキー抜きで残らないか ／ 髪色が元のPNGと極端に変わっていないか ／ パステルにしても白飛びしないか</p>
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="look">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="items" hidden>
@@ -950,7 +951,7 @@
     </div>
   </section>
 
-  <button id="dockPeekButton" class="dock-peek-button" type="button" aria-expanded="false">Controls</button>
+  <button id="dockPeekButton" class="dock-peek-button" type="button" aria-expanded="false">設定を開く</button>
 
   <script src="./app.js" defer></script>
 </body>

@@ -731,6 +731,23 @@ body.dock-hidden .dock-peek-button {
   min-width: 0;
 }
 
+.character-wizard-progress {
+  height: 5px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--hairline-soft);
+  overflow: hidden;
+}
+
+.character-wizard-progress > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
 .character-wizard-step-prefix {
   color: var(--muted);
   font-size: 10px;

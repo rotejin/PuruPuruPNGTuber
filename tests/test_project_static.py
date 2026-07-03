@@ -1464,6 +1464,44 @@ class ProjectStaticTests(unittest.TestCase):
         ]:
             self.assertNotIn(f"ui.{button_id}.textContent =", app)
 
+    def test_all_app_js_id_selectors_exist_in_html(self) -> None:
+        """app.js が querySelector(All)("#xxx") で参照する全IDリテラルが、
+        index.html に id="xxx" として実在することを悉皆チェックする。
+
+        対象外（意図的に除外）:
+        - `#startupError` : 起動時エラー表示のために app.js が
+          document.createElement 等で動的生成するIDで、index.html には
+          最初から存在しない。
+        - bindRangePreviewControl などが使うテンプレートリテラルの
+          `` `#${id}` `` 形式の動的セレクタ。下の正規表現は "#xxx" /
+          '#xxx' というリテラル文字列だけにマッチするため、これらは
+          そもそも抽出対象に含まれない（別途 grep で確認済み）。
+        """
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        KNOWN_DYNAMIC_IDS = {"startupError"}
+
+        referenced_ids = set(
+            re.findall(r'querySelector(?:All)?\(\s*["\']#([A-Za-z0-9_-]+)["\']\s*\)', app)
+        )
+        self.assertTrue(
+            referenced_ids,
+            "querySelector(\"#...\") のIDリテラルが app.js から1件も抽出できませんでした。",
+        )
+
+        html_ids = set(re.findall(r'\bid="([^"]+)"', html))
+
+        missing = sorted(
+            id_ for id_ in referenced_ids
+            if id_ not in html_ids and id_ not in KNOWN_DYNAMIC_IDS
+        )
+        self.assertEqual(
+            missing,
+            [],
+            f"app.js が参照するIDが index.html に存在しません: {missing}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

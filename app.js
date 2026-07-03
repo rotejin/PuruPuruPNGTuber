@@ -514,6 +514,7 @@
     characterWizardPanel: document.querySelector("#characterWizardPanel"),
     characterWizardStartButton: document.querySelector("#characterWizardStartButton"),
     characterWizardStepText: document.querySelector("#characterWizardStepText"),
+    characterWizardProgressFill: document.querySelector("#characterWizardProgressFill"),
     characterWizardTitle: document.querySelector("#characterWizardTitle"),
     characterWizardDescription: document.querySelector("#characterWizardDescription"),
     characterWizardStatus: document.querySelector("#characterWizardStatus"),
@@ -7579,7 +7580,7 @@
   function closeHairBundleSetupMode() {
     state.hairBundleSetupMode = false;
     hairBundleSetupDrag = null;
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", false);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", false);
   }
 
   function ensureEyeCenters() {
@@ -7592,7 +7593,7 @@
 
   function autoDetectEyeCenters() {
     highlightEyesRaw = cloneEyeCenters(DEFAULT_EYE_CENTERS);
-    setEyeSetupStatus("瞳位置を推定配置しました。合わない場合は編集ONで黒目や虹彩の中心へドラッグしてください。");
+    setEyeSetupStatus("瞳位置を自動でおまかせしました。合わない場合は編集ONで黒目や虹彩の中心へドラッグしてください。");
   }
 
   function saveEyeSetup() {
@@ -7602,7 +7603,7 @@
     })) {
       return false;
     }
-    setEyeSetupStatus("瞳位置・範囲サイズ・回転を保存しました。新キャラ時は推定配置または再編集してください。");
+    setEyeSetupStatus("瞳位置・範囲サイズ・回転を保存しました。新キャラ時は自動でおまかせまたは再編集してください。");
     return true;
   }
 
@@ -7651,7 +7652,7 @@
 
   function autoDetectFaceDepthAnchors() {
     faceDepthAnchorsRaw = defaultFaceDepthAnchors();
-    setFaceDepthSetupStatus("顔奥行き点を推定配置しました。ズレる点だけドラッグで調整してください。");
+    setFaceDepthSetupStatus("顔奥行き点を自動でおまかせしました。ズレる点だけドラッグで調整してください。");
     return true;
   }
 
@@ -7666,7 +7667,7 @@
   function saveFaceDepthSetup() {
     const payload = buildFaceDepthSetupPayload();
     if (!payload.anchors) {
-      setFaceDepthSetupStatus("保存する顔奥行き点がありません。推定配置または奥行き点編集ONで確認してください。");
+      setFaceDepthSetupStatus("保存する顔奥行き点がありません。自動でおまかせまたは点を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(FACE_DEPTH_SETUP_STORAGE_KEY, payload, () => {
@@ -7693,7 +7694,7 @@
 
   function autoDetectNeckPivot() {
     neckPivotRaw = defaultNeckPivot();
-    setNeckPivotSetupStatus("首支点を推定配置しました。首の付け根にズレる場合はドラッグで調整してください。");
+    setNeckPivotSetupStatus("首支点を自動でおまかせしました。首の付け根にズレる場合はドラッグで調整してください。");
     return true;
   }
 
@@ -7707,7 +7708,7 @@
   function saveNeckPivotSetup() {
     const payload = buildNeckPivotSetupPayload();
     if (!payload.pivot) {
-      setNeckPivotSetupStatus("保存する首支点がありません。推定配置または首支点編集ONで確認してください。");
+      setNeckPivotSetupStatus("保存する首支点がありません。自動でおまかせまたは首の支点を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(NECK_PIVOT_SETUP_STORAGE_KEY, payload, () => {
@@ -7836,7 +7837,7 @@
   function saveHairBundleSetup() {
     const payload = buildHairBundleSetupPayload();
     if (!payload.bundles) {
-      setHairBundleSetupStatus("保存する髪束ラインがありません。標準テンプレまたは髪束編集ONで確認してください。");
+      setHairBundleSetupStatus("保存する髪束ラインがありません。標準テンプレまたは髪束を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(HAIR_BUNDLE_SETUP_STORAGE_KEY, payload, () => {
@@ -8014,7 +8015,7 @@
       if (state.hairBundleSetupMode) state.hairBundleSetupMode = false;
       hairBundleSetupDrag = null;
     }
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", state.hairBundleSetupMode);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", state.hairBundleSetupMode);
   }
 
   function updateCharacterWizardSetupControls() {
@@ -8044,6 +8045,10 @@
     const stepKey = characterWizardStepKey();
     const def = characterWizardStepDef();
     if (ui.characterWizardStepText) ui.characterWizardStepText.textContent = characterWizardStepNumberText();
+    if (ui.characterWizardProgressFill) {
+      const step = Math.min((characterWizard?.stepIndex || 0) + 1, CHARACTER_WIZARD_STEPS.length);
+      ui.characterWizardProgressFill.style.width = `${(step / CHARACTER_WIZARD_STEPS.length) * 100}%`;
+    }
     if (ui.characterWizardTitle) ui.characterWizardTitle.textContent = def.title;
     if (ui.characterWizardDescription) ui.characterWizardDescription.textContent = def.description;
     if (ui.characterWizardBackButton) ui.characterWizardBackButton.disabled = characterWizard.stepIndex <= 0;
@@ -8098,7 +8103,7 @@
     state.hairBundleSetupMode = false;
     hairBundleSetupDrag = null;
     if (ui.characterWizardPanel) ui.characterWizardPanel.hidden = true;
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", false);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", false);
     updateCharacterWizardSetupControls();
   }
 
@@ -8329,7 +8334,7 @@
   function saveHighlightSetup() {
     const payload = buildHighlightSetupPayload();
     if (!payload.points) {
-      setHighlightSetupStatus("保存するハイライト位置がありません。自動配置またはハイライト配置ONで確認してください。");
+      setHighlightSetupStatus("保存するハイライト位置がありません。自動でおまかせまたはハイライトを配置ONで確認してください。");
       return false;
     }
     if (!safeSetJson(HIGHLIGHT_SETUP_STORAGE_KEY, payload, () => {
@@ -11554,7 +11559,7 @@
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "rgba(52,39,31,0.92)";
     ctx.font = "900 14px system-ui, sans-serif";
-    ctx.fillText("髪束編集：どこに合わせる？", x + 14, y + 24);
+    ctx.fillText("髪束を編集：どこに合わせる？", x + 14, y + 24);
     const rows = [
       { color: "#ff9b3d", text: "前髪：顔の前にかかる髪" },
       { color: "#45c7e8", text: "横髪：耳横・頬横の長い髪" },
@@ -13073,11 +13078,11 @@
   // on/off 文言は現状の各ハンドラ内 syncButtonPressed 呼出の引数と完全一致。
   const SETUP_TOOLS = {
     editMode:        { button: "editModeButton",        on: "編集モード ON",     off: "編集モード OFF",     state: "editMode" },
-    eyeSetup:        { button: "eyeSetupButton",        on: "瞳位置編集 ON",     off: "瞳位置編集 OFF",     state: "eyeSetupMode" },
-    highlightSetup:  { button: "highlightSetupButton",  on: "ハイライト配置 ON", off: "ハイライト配置 OFF", state: "highlightSetupMode" },
-    faceDepthSetup:  { button: "faceDepthSetupButton",  on: "奥行き点編集 ON",   off: "奥行き点編集 OFF",   state: "faceDepthSetupMode" },
-    neckPivotSetup:  { button: "neckPivotSetupButton",  on: "首支点編集 ON",     off: "首支点編集 OFF",     state: "neckPivotSetupMode" },
-    hairBundleSetup: { button: "hairBundleSetupButton", on: "髪束編集 ON",       off: "髪束編集 OFF",       state: "hairBundleSetupMode" },
+    eyeSetup:        { button: "eyeSetupButton",        on: "瞳の位置を編集 ON",   off: "瞳の位置を編集 OFF",   state: "eyeSetupMode" },
+    highlightSetup:  { button: "highlightSetupButton",  on: "ハイライトを配置 ON", off: "ハイライトを配置 OFF", state: "highlightSetupMode" },
+    faceDepthSetup:  { button: "faceDepthSetupButton",  on: "点を編集 ON",         off: "点を編集 OFF",         state: "faceDepthSetupMode" },
+    neckPivotSetup:  { button: "neckPivotSetupButton",  on: "首の支点を編集 ON",   off: "首の支点を編集 OFF",   state: "neckPivotSetupMode" },
+    hairBundleSetup: { button: "hairBundleSetupButton", on: "髪束を編集 ON",       off: "髪束を編集 OFF",       state: "hairBundleSetupMode" },
   };
 
   // 6つの drag 変数は IIFE トップレベルのクロージャスコープで宣言されているため一括クリア可能。
@@ -13189,12 +13194,12 @@
   function saveAdjustSnapshot() {
     const payload = buildAllSettingsPayload({ includeItemImages: false, includeBaseline: false });
     adjustSnapshotState = { ...payload.state };
-    setEditStatus("現在の状態を調整前として保存しました。");
+    setEditStatus("今の状態を保存しました。");
   }
 
   function restoreAdjustSnapshot() {
     if (!adjustSnapshotState) {
-      setEditStatus("調整前スナップショットがありません。「調整前を保存」で保存してください。");
+      setEditStatus("保存した状態がありません。「今の状態を保存」で保存してください。");
       return;
     }
     applyAllSettingsState(adjustSnapshotState);
@@ -13208,7 +13213,7 @@
     syncAllSettingControls();
     updateAllChangedBadges();
     setPreviewTarget(0, 0);
-    setEditStatus("調整前の状態に戻しました。");
+    setEditStatus("保存した状態に戻しました。");
   }
 
   function syncAllSettingControls() {
@@ -13229,13 +13234,13 @@
     if (ui.editKeySelect) ui.editKeySelect.value = state.editKey;
     if (ui.hairBundleFocusSelect) ui.hairBundleFocusSelect.value = normalizeHairBundleFocus(hairBundleFocus);
     syncButtonPressed(ui.editModeButton, "編集モード ON", "編集モード OFF", state.editMode);
-    syncButtonPressed(ui.eyeSetupButton, "瞳位置編集 ON", "瞳位置編集 OFF", state.eyeSetupMode);
-    syncButtonPressed(ui.highlightSetupButton, "ハイライト配置 ON", "ハイライト配置 OFF", state.highlightSetupMode);
-    syncButtonPressed(ui.faceDepthSetupButton, "奥行き点編集 ON", "奥行き点編集 OFF", state.faceDepthSetupMode);
-    syncButtonPressed(ui.neckPivotSetupButton, "首支点編集 ON", "首支点編集 OFF", state.neckPivotSetupMode);
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", state.hairBundleSetupMode);
+    syncButtonPressed(ui.eyeSetupButton, "瞳の位置を編集 ON", "瞳の位置を編集 OFF", state.eyeSetupMode);
+    syncButtonPressed(ui.highlightSetupButton, "ハイライトを配置 ON", "ハイライトを配置 OFF", state.highlightSetupMode);
+    syncButtonPressed(ui.faceDepthSetupButton, "点を編集 ON", "点を編集 OFF", state.faceDepthSetupMode);
+    syncButtonPressed(ui.neckPivotSetupButton, "首の支点を編集 ON", "首の支点を編集 OFF", state.neckPivotSetupMode);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", state.hairBundleSetupMode);
     syncButtonPressed(ui.demoTalkButton, "口パクデモ ON", "口パクデモ OFF", state.demoTalk);
-    syncButtonPressed(ui.idleMotionButton, "待機モーション ON", "待機モーション OFF", state.idleMotionEnabled);
+    syncButtonPressed(ui.idleMotionButton, "待機ゆれ ON", "待機ゆれ OFF", state.idleMotionEnabled);
     syncButtonPressed(ui.diagonalFaceWarpButton, "斜め補正 ON", "斜め補正 OFF", state.diagonalFaceWarpEnabled);
     syncButtonPressed(ui.blinkButton, "まばたき ON", "まばたき OFF", state.autoBlink);
     updateMouseFollowButton();
@@ -13678,7 +13683,7 @@
       updateChangedBadgeForControl("subHighlightEnabled");
       if (state.subHighlightEnabled) {
         ensureSubHighlightPoints();
-        setHighlightSetupStatus("サブハイライトをONにしました。ハイライト配置ONでサブ光も移動できます。");
+        setHighlightSetupStatus("サブハイライトをONにしました。ハイライトを配置ONでサブ光も移動できます。");
       } else {
         if (highlightSetupDrag?.kind === "sub") highlightSetupDrag = null;
         setHighlightSetupStatus("サブハイライトをOFFにしました。");
@@ -13695,7 +13700,7 @@
         setPreviewTarget(0, 0);
         setHighlightSetupStatus("左右の光マーカーを、白い光を置きたい位置へドラッグしてください。");
       } else {
-        setHighlightSetupStatus("ハイライト配置OFF。ズレる時だけ再編集できます。");
+        setHighlightSetupStatus("ハイライトを配置OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13715,7 +13720,7 @@
         setPreviewTarget(0, 0);
         setFaceDepthSetupStatus("5つの丸を、左目・右目・鼻・口・顎の中心へドラッグしてください。");
       } else {
-        setFaceDepthSetupStatus("奥行き点編集OFF。ズレる時だけ再編集できます。");
+        setFaceDepthSetupStatus("点を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13735,7 +13740,7 @@
         setPreviewTarget(0, 0);
         setNeckPivotSetupStatus("紫の丸を首の付け根へドラッグしてください。");
       } else {
-        setNeckPivotSetupStatus("首支点編集OFF。ズレる時だけ再編集できます。");
+        setNeckPivotSetupStatus("首の支点を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13764,7 +13769,7 @@
         setPreviewTarget(0, 0);
         setHairBundleSetupStatus(`表示中: ${hairBundleFocusLabel()}。白丸は髪束の上端・頭に入っていくあたり、色丸は大きく揺らしたい毛先に置きます。`);
       } else {
-        setHairBundleSetupStatus("髪束編集OFF。ズレる時だけ再編集できます。");
+        setHairBundleSetupStatus("髪束を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13789,7 +13794,7 @@
         setPreviewTarget(0, 0);
         setEyeSetupStatus("左右の丸を黒目や虹彩の中心へドラッグしてください。");
       } else {
-        setEyeSetupStatus("瞳位置編集OFF。新キャラ時は推定配置または再編集できます。");
+        setEyeSetupStatus("瞳の位置を編集OFF。新キャラ時は自動でおまかせまたは再編集できます。");
       }
     });
 
@@ -13932,7 +13937,7 @@
           state.targetY = 0;
         }
       }
-      syncButtonPressed(ui.idleMotionButton, "待機モーション ON", "待機モーション OFF", state.idleMotionEnabled);
+      syncButtonPressed(ui.idleMotionButton, "待機ゆれ ON", "待機ゆれ OFF", state.idleMotionEnabled);
       updateMouseFollowButton();
     });
 
