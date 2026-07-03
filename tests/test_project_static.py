@@ -1377,6 +1377,41 @@ class ProjectStaticTests(unittest.TestCase):
             except UnicodeEncodeError:
                 self.fail(f"Use ASCII file and directory names for public repository paths: {relative}")
 
+    def test_section_nav_is_wired(self) -> None:
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        self.assertIn('"purupuru-section-v1"', app)
+        self.assertIn('"purupuru-workspace-v1"', app)
+        self.assertIn('"purupuru-adjust-category-v1"', app)
+        # 旧2階層タブからの移行読取分岐が残っていること。
+        self.assertIn("WORKSPACE_STORAGE_KEY", app)
+        self.assertIn("ADJUST_CATEGORY_STORAGE_KEY", app)
+        self.assertIn('legacyWorkspace === "adjust"', app)
+
+        target_keys = set(re.findall(r'data-section-target="([^"]+)"', html))
+        page_keys = set(re.findall(r'data-section-page="([^"]+)"', html))
+        expected_keys = {
+            "start",
+            "layout",
+            "face",
+            "mouth",
+            "eyes",
+            "hair",
+            "look",
+            "items",
+            "output",
+            "advanced",
+        }
+        self.assertEqual(target_keys, expected_keys)
+        self.assertEqual(page_keys, expected_keys)
+        self.assertEqual(len(target_keys), 10)
+
+        self.assertNotIn("function setWorkspacePage", app)
+        self.assertNotIn("function setAdjustCategory", app)
+        self.assertNotIn("function bindWorkspaceTabs", app)
+        self.assertNotIn("function bindAdjustTabs", app)
+
 
 if __name__ == "__main__":
     unittest.main()

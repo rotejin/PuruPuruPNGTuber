@@ -161,8 +161,10 @@
   const ALL_SETTINGS_STORAGE_KEY = "purupuru-pngtuber-all-settings-v1";
   // control-group廃止で未使用（Phase 2）。旧アコーディオン開閉状態の保存に使われていた。
   // const UI_STATE_STORAGE_KEY = "move-avatar-ui-state-v6";
+  // Phase 2: ナビレール一本化に伴い旧2階層タブは廃止。以下2つは移行読取専用で残す。
   const WORKSPACE_STORAGE_KEY = "purupuru-workspace-v1";
   const ADJUST_CATEGORY_STORAGE_KEY = "purupuru-adjust-category-v1";
+  const SECTION_STORAGE_KEY = "purupuru-section-v1";
 
   // Phase 4: baseline 基準値・変更済み表示
   let baselineSettings = null;
@@ -530,6 +532,7 @@
     characterWizardMoveUpButton: document.querySelector("#characterWizardMoveUpButton"),
     characterWizardMoveDownButton: document.querySelector("#characterWizardMoveDownButton"),
     drawingAvatarStartButton: document.querySelector("#drawingAvatarStartButton"),
+    addCharacterFromStartButton: document.querySelector("#addCharacterFromStartButton"),
     drawingAvatarMenuButton: document.querySelector("#drawingAvatarMenuButton"),
     drawingAvatarPanel: document.querySelector("#drawingAvatarPanel"),
     drawingAvatarStatus: document.querySelector("#drawingAvatarStatus"),
@@ -3267,20 +3270,15 @@
     return isAutoSeededCharacterSourceKind(kind) && readDeletedAutoCharacterSourceKinds().has(String(kind));
   }
 
-  function currentWorkspacePage() {
-    return document.querySelector("[data-workspace-target][aria-pressed='true']")?.dataset.workspaceTarget || "adjust";
-  }
-
-  function currentAdjustCategory() {
-    return document.querySelector("[data-adjust-target][aria-pressed='true']")?.dataset.adjustTarget || "layout";
+  function currentSection() {
+    return document.querySelector("[data-section-target][aria-pressed='true']")?.dataset.sectionTarget || "start";
   }
 
   function captureGlobalRuntimeSettings() {
     return {
       obsPresetKey,
       obsPublishEnabled,
-      workspacePage: currentWorkspacePage(),
-      adjustCategory: currentAdjustCategory(),
+      section: currentSection(),
       dockHidden: document.body.classList.contains("dock-hidden"),
       stateOverrides: {
         mouseFollowEnabled: state.mouseFollowEnabled,
@@ -3298,8 +3296,7 @@
     updateObsUrlPreview();
     obsPublishEnabled = Boolean(runtime.obsPublishEnabled);
     syncObsPublishButton();
-    if (runtime.workspacePage) setWorkspacePage(runtime.workspacePage);
-    if (runtime.adjustCategory) setAdjustCategory(runtime.adjustCategory);
+    if (runtime.section) setSection(runtime.section);
     setDockHidden(Boolean(runtime.dockHidden));
     for (const [key, value] of Object.entries(runtime.stateOverrides || {})) {
       if (Object.prototype.hasOwnProperty.call(state, key)) state[key] = value;
@@ -6891,62 +6888,63 @@
     ui.dockPeekButton?.setAttribute("aria-expanded", String(!hidden));
   }
 
-  function setWorkspacePage(page) {
-    const pages = new Set(["adjust", "items", "output", "advanced"]);
-    const next = pages.has(page) ? page : "adjust";
-    document.querySelectorAll("[data-workspace-page]").forEach((el) => {
-      el.hidden = el.dataset.workspacePage !== next;
+  const SECTION_KEYS = new Set([
+    "start",
+    "layout",
+    "face",
+    "mouth",
+    "eyes",
+    "hair",
+    "look",
+    "items",
+    "output",
+    "advanced",
+  ]);
+
+  function setSection(section) {
+    const next = SECTION_KEYS.has(section) ? section : "start";
+    document.querySelectorAll("[data-section-page]").forEach((el) => {
+      el.hidden = el.dataset.sectionPage !== next;
     });
-    document.querySelectorAll("[data-workspace-target]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.workspaceTarget === next));
+    document.querySelectorAll("[data-section-target]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.sectionTarget === next));
     });
+    const dockContent = document.querySelector(".dock-content");
+    if (dockContent) dockContent.scrollTop = 0;
     try {
-      localStorage.setItem(WORKSPACE_STORAGE_KEY, next);
+      localStorage.setItem(SECTION_STORAGE_KEY, next);
     } catch (error) {
-      console.warn("ワークスペース状態の保存に失敗しました", error);
+      console.warn("セクション状態の保存に失敗しました", error);
     }
   }
 
-  function bindWorkspaceTabs() {
-    document.querySelectorAll("[data-workspace-target]").forEach((button) => {
-      button.addEventListener("click", () => setWorkspacePage(button.dataset.workspaceTarget));
+  function bindSectionNav() {
+    document.querySelectorAll("[data-section-target]").forEach((button) => {
+      button.addEventListener("click", () => setSection(button.dataset.sectionTarget));
     });
-    let initial = "adjust";
+    let initial = null;
     try {
-      initial = localStorage.getItem(WORKSPACE_STORAGE_KEY) || "adjust";
+      initial = localStorage.getItem(SECTION_STORAGE_KEY);
     } catch (error) {
-      console.warn("ワークスペース状態の読込に失敗しました", error);
+      console.warn("セクション状態の読込に失敗しました", error);
     }
-    setWorkspacePage(initial);
-  }
-
-  function setAdjustCategory(category) {
-    const categories = new Set(["layout", "face", "mouth", "eyes", "hair", "look"]);
-    const next = categories.has(category) ? category : "layout";
-    document.querySelectorAll("[data-adjust-page]").forEach((el) => {
-      el.hidden = el.dataset.adjustPage !== next;
-    });
-    document.querySelectorAll("[data-adjust-target]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.adjustTarget === next));
-    });
-    try {
-      localStorage.setItem(ADJUST_CATEGORY_STORAGE_KEY, next);
-    } catch (error) {
-      console.warn("調整カテゴリ状態の保存に失敗しました", error);
+    if (!initial) {
+      // 旧2階層タブ（workspace/adjust）からの移行読取。
+      let legacyWorkspace = null;
+      let legacyAdjust = null;
+      try {
+        legacyWorkspace = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+        legacyAdjust = localStorage.getItem(ADJUST_CATEGORY_STORAGE_KEY);
+      } catch (error) {
+        console.warn("旧ワークスペース状態の読込に失敗しました", error);
+      }
+      if (legacyWorkspace === "adjust") {
+        initial = legacyAdjust || "layout";
+      } else if (legacyWorkspace === "items" || legacyWorkspace === "output" || legacyWorkspace === "advanced") {
+        initial = legacyWorkspace;
+      }
     }
-  }
-
-  function bindAdjustTabs() {
-    document.querySelectorAll("[data-adjust-target]").forEach((button) => {
-      button.addEventListener("click", () => setAdjustCategory(button.dataset.adjustTarget));
-    });
-    let initial = "layout";
-    try {
-      initial = localStorage.getItem(ADJUST_CATEGORY_STORAGE_KEY) || "layout";
-    } catch (error) {
-      console.warn("調整カテゴリ状態の読込に失敗しました", error);
-    }
-    setAdjustCategory(initial);
+    setSection(initial || "start");
   }
 
   function setBackgroundColor(value) {
@@ -13317,7 +13315,7 @@
     if (!element) return false;
     if (element.closest("#obsPanel")) return false;
     if (element.closest("#characterSwitcher")) return false;
-    if (element.closest(".workspace-tabs") || element.closest(".adjust-tabs")) return false;
+    if (element.closest(".nav-rail")) return false;
     if (element.id === "allSettingsFileInput" || element.id === "addCharacterFileInput") return false;
     return Boolean(element.closest(".control-card") || element.closest(".character-wizard-panel"));
   }
@@ -13336,6 +13334,9 @@
     });
     ui.duplicateCharacterButton?.addEventListener("click", () => {
       void duplicateActiveCharacterProfile();
+    });
+    ui.addCharacterFromStartButton?.addEventListener("click", () => {
+      ui.addCharacterButton?.click();
     });
     ui.addCharacterFileInput?.addEventListener("change", async () => {
       const file = ui.addCharacterFileInput.files?.[0];
@@ -13390,8 +13391,8 @@
 
   function showItemWorkspaceForDrag(event) {
     if (!hasPotentialItemFileDrag(event)) return false;
-    const itemPage = document.querySelector('[data-workspace-page="items"]');
-    if (itemPage?.hidden) setWorkspacePage("items");
+    const itemPage = document.querySelector('[data-section-page="items"]');
+    if (itemPage?.hidden) setSection("items");
     return true;
   }
 
@@ -14042,8 +14043,7 @@
   function bindNavigationAndBaselineControls() {
     updateMouseFollowButton();
     updateRangePreviewButtons();
-    bindWorkspaceTabs();
-    bindAdjustTabs();
+    bindSectionNav();
 
     // Phase 4: baseline 基準値 UI のバインド
     document.querySelectorAll("[data-reset-section]").forEach((button) => {
