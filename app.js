@@ -10052,6 +10052,17 @@
   const HAIR_HEAD_LAG_Y = 0.85;
   const HAIR_HEAD_LAG_LIMIT_X = 30;
   const HAIR_HEAD_LAG_LIMIT_Y = 18;
+  // ★9 縦スカッシュ&ストレッチ: 頭の縦移動速度に応じて髪を横に開閉する。
+  // 下降時=圧縮で外へ開き外側毛先が浮く / 上昇時=伸長で内へ窄まる（体積保存の見た目・参考動画の縦揺れ準拠）。
+  const HAIR_VERT_SQUASH_VEL = 0.014;
+  const HAIR_VERT_SQUASH_FRONT = 5.5;
+  const HAIR_VERT_SQUASH_BACK = 9.5;
+  // ★10 しなり(S字)強調: 深さ n と n-0.3 のバネ状態差を曲率として加算し、
+  // 頭の動きが根元→毛先へ波として走る「しなり」を出す。
+  const HAIR_BEND_SAMPLE_OFFSET = 0.3;
+  const HAIR_BEND_GAIN_ANGLE = 16;
+  const HAIR_BEND_GAIN_HEAD = 0.55;
+  const HAIR_BEND_LIMIT = 14;
   const HAIR_SAMPLE_KEYS = [
     "anglePos",
     "anglePosY",
@@ -10067,6 +10078,7 @@
     "stretchY",
   ];
   const hairWarpBaseSpringSample = {};
+  const hairBendSpringSample = {}; // ★10 のしなり参照サンプル用スクラッチ
   const hairBundleSpringSampleScratch = {};
   const hairBundleRigMixScratch = {};
   const hairBundleRigMotionSpringScratch = {};
@@ -10119,14 +10131,15 @@
   function integrateHairSpringBucket(bucket, t, wave, targets, options) {
     const stiffness = options.stiffness ?? 1;
     const damping = options.damping ?? 1;
-    const k1 = lerp(190, 55, t) * stiffness;
-    // ★5 ハリ: 根元はほぼ臨界減衰(ζ≈0.9)のまま、毛先ほど減衰比を下げる(ζ≈0.5)。
-    // 頭が止まった後に毛先が一度だけ行き過ぎて戻る「ハリのある」挙動にする。
-    const c1 = lerp(24, 7.5, t) * damping;
-    const k2 = lerp(260, 120, t) * stiffness;
-    const c2 = lerp(29, 12, t) * damping;
-    const kP = lerp(132, 34, t) * stiffness;
-    const cP = lerp(21, 6.5, t) * damping;
+    // ★5 ハリ: 根元はほぼ臨界減衰(ζ≈0.9)のまま、毛先ほど減衰比を下げる(ζ≈0.45)。
+    // 毛先の剛性を高めに保つ(k1 tip 55→100 / kP tip 34→56)ことで固有振動数を上げ、
+    // 「素早く一度だけ行き過ぎてピタッと戻る」スプリングらしいハリを出す（参考動画準拠）。
+    const k1 = lerp(190, 100, t) * stiffness;
+    const c1 = lerp(24, 9, t) * damping;
+    const k2 = lerp(260, 170, t) * stiffness;
+    const c2 = lerp(29, 13, t) * damping;
+    const kP = lerp(132, 56, t) * stiffness;
+    const cP = lerp(21, 6.7, t) * damping;
 
     // ★6 連鎖化(follow-the-leader): wave は各段に専用ターゲットがあるため従来通り直接追従。
     const prev = options.prev || null;
@@ -10390,6 +10403,17 @@
     const velocityLagX = clamp((-s.headVelX * 0.028 - s.angleVel * 2.4) * lagWeight, -18, 18); // 頭の速度・角速度に逆向きへ流す追加慣性。角度差分遅れとの二重効きを避けるため角速度は控えめ
     const velocityLagY = clamp(-s.headVelY * 0.018 * lagWeight, -12, 12); // 上下移動に遅れて毛先が残る重めの慣性
 
+    // ★10 しなり: 少し根元側(n-0.3)とのバネ状態差を曲率として加算。
+    // 各深さの遅れの「差分」なので、頭の動きが根元→毛先へS字の波として走って見える。
+    const bendRef = sampleHairSpring(layer, Math.max(0, n - HAIR_BEND_SAMPLE_OFFSET), hairBendSpringSample);
+    const bendX = clamp(
+      ((baseSpring.anglePos - bendRef.anglePos) * HAIR_BEND_GAIN_ANGLE +
+        (baseSpring.headPosX - bendRef.headPosX) * HAIR_BEND_GAIN_HEAD) *
+        activeMask * springAmt,
+      -HAIR_BEND_LIMIT,
+      HAIR_BEND_LIMIT
+    );
+
     let p = deformerWarpPoint(layerKey, x, y);
     const crownLock = hairCrownRootLockMask(x, y);
     if (crownLock > 0.001) {
@@ -10403,7 +10427,7 @@
     }
     const rootMotionDampen = layer === "front" ? 1 - crownLock * 0.85 * frontHairRootFollowAmount() : 1;
     const edgeShiftX = nx * edge * ax * (layer === "front" ? 2.2 : -3.0) * hair * bundleMotion.edgeScale * rootMotionDampen;
-    const motionDX = shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + edgeShiftX;
+    const motionDX = shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + edgeShiftX + bendX; // ★10 含む
     const motionDY = shiftY + s.stretchY * bundleMotion.motionScale + tipDelayY + lagY + velocityLagY;
 
     // ★7 円弧補正: 横変位 dx に対し根元支点の振り子として y を dx^2/(2L) 持ち上げる（長さ保存の弧）。
@@ -10426,8 +10450,20 @@
       }
     }
 
-    p.x += motionDX + splayX;
-    p.y += motionDY - arcLift + splayY; // ★1-Y + ★3 + ★4 + 速度慣性 + ★7 + ★8
+    // ★9 縦スカッシュ&ストレッチ: 頭の縦速度の符号で開閉を切り替える（★8 は速さのみで無方向）。
+    // 下降時(headVelY>0)は圧縮 → 横に開き外側の毛先ほど浮く。上昇時は伸長 → 内側に窄まり下へ流れる。
+    const vertVel = clamp(s.headVelY * HAIR_VERT_SQUASH_VEL, -1.1, 1.1);
+    const squashAmt = vertVel * activeMask * activeMask * springAmt * (layer === "front" ? HAIR_VERT_SQUASH_FRONT : HAIR_VERT_SQUASH_BACK);
+    let squashX = 0;
+    let squashY = 0;
+    if (Math.abs(squashAmt) > 0.01) {
+      const uSide = clamp((x - metrics.center.x) / Math.max(1, metrics.radiusX), -1.5, 1.5);
+      squashX = uSide * squashAmt;
+      squashY = -Math.abs(uSide) * squashAmt * 0.45;
+    }
+
+    p.x += motionDX + splayX + squashX;
+    p.y += motionDY - arcLift + splayY + squashY; // ★1-Y + ★3 + ★4 + 速度慣性 + ★7 + ★8 + ★9 + ★10
     return p;
   }
 

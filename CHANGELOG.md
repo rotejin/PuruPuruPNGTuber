@@ -4,6 +4,7 @@ All notable changes to PuruPuru PNGTuber will be documented here.
 
 ## Unreleased
 
+- Enriched hair spring physics for a snappier, more elastic look (reference-video based): stiffer tip springs with lower damping ratio (★5), vertical squash-and-stretch that fans hair outward on downward head motion (★9), and an S-curve bend term that propagates head motion from root to tip as a whip-like wave (★10).
 - Added the "draw a new character" feature: paint face, eye, mouth, and hair layers in the browser and auto-compose the six expression PNGs into a new character, with brush stabilization, pen pressure, zoom/pan, expression previews, and keyboard shortcuts.
 - Added re-editing of drawn characters from the character menu.
 - Added character deletion from the character switcher, including suppression of automatic demo character re-seeding after deletion.
