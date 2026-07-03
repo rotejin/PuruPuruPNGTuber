@@ -345,6 +345,29 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("すべて透過PNG", readme)
         self.assertIn("同じキャンバスサイズ・同じ位置合わせ", readme)
 
+    def test_purupuru_package_is_documented_as_self_contained(self) -> None:
+        readme = self.read_text("README.md")
+        usage = self.read_text("docs/usage.md")
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        for text in [
+            "画像込みのポータブルな `.purupuru` アバターパッケージ",
+            "元のPNG素材フォルダに依存しない",
+        ]:
+            self.assertIn(text, readme)
+
+        for text in [
+            "画像込みのポータブルなアバターパッケージ",
+            "別PCへ渡した場合でも、`.purupuru` ファイルがあればキャラを読み込めます",
+            "別PCへ移行する場合は、素材フォルダではなく `.purupuru` を渡すのが安全",
+        ]:
+            self.assertIn(text, usage)
+
+        self.assertIn("画像込み .purupuru 保存", html)
+        self.assertIn("元PNGの場所に依存しないため、バックアップや別PCへの移行に使えます", html)
+        self.assertIn("調整値を画像込みで保存しました", app)
+
     def test_license_is_apache_2_and_assets_are_separate(self) -> None:
         license_text = self.read_text("LICENSE")
         readme = self.read_text("README.md")

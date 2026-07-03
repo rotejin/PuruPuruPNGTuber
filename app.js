@@ -1214,7 +1214,7 @@
     })) {
       return false;
     }
-    setEditStatus("ワープ編集だけをブラウザ内に保存しました。全体のバックアップは .purupuru 保存を使います。");
+    setEditStatus("ワープ編集だけをブラウザ内に保存しました。全体のバックアップは画像込み .purupuru 保存を使います。");
     return true;
   }
 
@@ -2023,7 +2023,7 @@
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       tryRememberAllSettingsPayload(buildAllSettingsPayload({ includeItemImages: false }));
-      setEditStatus(".purupuru ファイルを書き出しました。キャラPNGとPNGアイテムも含まれます。");
+      setEditStatus(".purupuru ファイルを書き出しました。キャラPNG、PNGアイテム、調整値を画像込みで保存しました。");
       return true;
     } catch (error) {
       console.warn(".purupuru 保存に失敗しました。", error);
@@ -3176,7 +3176,7 @@
     const ratio = quota > 0 ? usage / quota : 0;
     if (usage < CHARACTER_STORAGE_WARNING_BYTES && ratio < CHARACTER_STORAGE_WARNING_USAGE_RATIO) return;
     characterStorageWarningShown = true;
-    const message = "ブラウザの保存容量が少なくなっています。不要なキャラを削除するか、.purupuru でバックアップしてください。";
+    const message = "ブラウザの保存容量が少なくなっています。不要なキャラを削除するか、画像込み .purupuru でバックアップしてください。";
     console.warn(message, { usage, quota });
     setEditStatus(message);
   }
@@ -3193,7 +3193,7 @@
     const profileList = await listCharacterProfiles().catch(() => characterProfilesCache);
     const isNewProfile = !profileList.some((profile) => String(profile.id) === String(storedRecord.id));
     if (isNewProfile && profileList.length >= MAX_CHARACTER_PROFILES) {
-      throw new Error(`キャラは最大${MAX_CHARACTER_PROFILES}件まで保存できます。不要なキャラを削除するか .purupuru でバックアップしてください。`);
+      throw new Error(`キャラは最大${MAX_CHARACTER_PROFILES}件まで保存できます。不要なキャラを削除するか画像込み .purupuru でバックアップしてください。`);
     }
     warnIfCharacterStorageNearLimit(storageEstimate);
     const store = await characterStore("readwrite");
@@ -4333,7 +4333,7 @@
     }
 
     const targetName = target.name || "未設定キャラ";
-    if (!window.confirm(`「${targetName}」を削除しますか？この操作は元に戻せません。必要なら先に .purupuru 保存してください。`)) {
+    if (!window.confirm(`「${targetName}」を削除しますか？この操作は元に戻せません。必要なら先に画像込み .purupuru 保存してください。`)) {
       return false;
     }
 
@@ -8253,7 +8253,7 @@
     if (stepKey === "finish") {
       if (applyCharacterWizardDraft(characterWizard.draft)) {
         closeCharacterWizard();
-        setEditStatus("新キャラセットアップを反映しました。.purupuru 保存でバックアップできます。");
+        setEditStatus("新キャラセットアップを反映しました。画像込み .purupuru 保存でバックアップできます。");
       }
       return;
     }

@@ -196,7 +196,7 @@
         <ol class="quick-guide-list">
           <li><span>1</span>新キャラ作成で顔中心・目・口・髪を合わせる</li>
           <li><span>2</span>かんたん調整でサイズと動きを合わせる</li>
-          <li><span>3</span>.purupuru 保存でバックアップする</li>
+          <li><span>3</span>画像込み .purupuru 保存でバックアップする</li>
         </ol>
         <button id="characterWizardStartButton" class="primary-button full-width-button" type="button">新キャラ作成を開始</button>
         <button id="drawingAvatarStartButton" class="ghost-button full-width-button" type="button">お絵描きで新キャラ作成</button>
@@ -763,9 +763,9 @@
             <span>キャラをファイルに保存</span>
             <strong>保存・読込</strong>
           </div>
-          <p class="small-note">キャラPNG、調整値、背景色、髪色、瞳位置、ハイライト位置、ワープ編集、PNGアイテム、OBSプリセットを .purupuru ファイルにまとめて保存・読み込みします。顔向き・可動範囲・顔の立体感と、PNGアイテムの位置/サイズ/回転/不透明度も含まれます。</p>
+          <p class="small-note">.purupuru は画像込みのポータブルなアバターパッケージです。キャラPNG、調整値、背景色、髪色、瞳位置、ハイライト位置、ワープ編集、PNGアイテム、OBSプリセットを1つのファイルにまとめて保存・読み込みします。元PNGの場所に依存しないため、バックアップや別PCへの移行に使えます。</p>
           <div class="simple-grid">
-            <button id="savePuruPuruButton" class="primary-button" type="button">.purupuru 保存</button>
+            <button id="savePuruPuruButton" class="primary-button" type="button">画像込み .purupuru 保存</button>
             <button id="loadPuruPuruButton" class="ghost-button muted-button" type="button">このキャラを置き換え</button>
           </div>
           <input id="allSettingsFileInput" type="file" accept=".purupuru,application/zip,application/x-zip-compressed" hidden />
@@ -808,7 +808,7 @@
             <button id="resetEditKeyButton" class="ghost-button muted-button" type="button">キー初期化</button>
             <button id="resetAllDeformersButton" class="ghost-button muted-button danger-button" type="button">全初期化</button>
           </div>
-          <p id="editStatus" class="small-note">編集モードONで、表示中の格子点をドラッグできます。この欄のワープ保存/読込はデフォーマ編集だけが対象です。全体の保存は「OBS・保存」の .purupuru 保存を使います。</p>
+          <p id="editStatus" class="small-note">編集モードONで、表示中の格子点をドラッグできます。この欄のワープ保存/読込はデフォーマ編集だけが対象です。全体の保存は「OBS・保存」の画像込み .purupuru 保存を使います。</p>
         </section>
           </div>
       </div>
