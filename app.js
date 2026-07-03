@@ -8,12 +8,15 @@
   const TAU = Math.PI * 2;
   const HAIR_WARP_EFFECT_MULTIPLIER = 2; // 髪の揺れ・遅れ: 50% で従来の 100% 相当にする。
   const IDLE_MOTION_RANGE_BOOST = 1.22; // 待機モーションは手動マウス操作に近く見えるよう、可動範囲を少し強めに使う。
+  const MEDIAPIPE_TASKS_VISION_VERSION = "0.10.35";
+  const MEDIAPIPE_VENDOR_ROOT = new URL("vendor/mediapipe/", window.location.href);
   const FACE_TRACKING_CONFIG = {
-    visionModuleUrl: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/vision_bundle.mjs",
-    wasmRoot: "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm",
-    modelAssetPath:
-      "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+    visionModuleUrl: new URL(`tasks-vision/${MEDIAPIPE_TASKS_VISION_VERSION}/vision_bundle.mjs`, MEDIAPIPE_VENDOR_ROOT).href,
+    wasmRoot: new URL(`tasks-vision/${MEDIAPIPE_TASKS_VISION_VERSION}/wasm`, MEDIAPIPE_VENDOR_ROOT).href,
+    modelAssetPath: new URL("face_landmarker/float16/face_landmarker.task", MEDIAPIPE_VENDOR_ROOT).href,
     calibrationFrames: 30,
+    maxDetectFps: 15,
+    defaultDelegate: "CPU",
     smoothing: 0.35,
     yawGain: 1.45,
     pitchGain: 6,
@@ -25,6 +28,10 @@
     chin: 152,
   };
   const URL_PARAMS = new URLSearchParams(window.location.search);
+  const FACE_TRACKING_DELEGATE_QUERY = String(URL_PARAMS.get("faceDelegate") || URL_PARAMS.get("face-delegate") || "").trim().toUpperCase();
+  const FACE_TRACKING_PREFERRED_DELEGATE =
+    FACE_TRACKING_DELEGATE_QUERY === "GPU" ? "GPU" : FACE_TRACKING_CONFIG.defaultDelegate;
+  const FACE_TRACKING_DETECT_INTERVAL_MS = 1000 / Math.max(1, FACE_TRACKING_CONFIG.maxDetectFps);
   const APP_MODE = String(URL_PARAMS.get("mode") || "control").toLowerCase();
   const OBS_MODE = APP_MODE === "obs";
   const OBS_PRESETS = {
@@ -34,8 +41,7 @@
   };
   const DEFAULT_OBS_PRESET = "light";
   const OBS_TRANSPARENT = OBS_MODE && URL_PARAMS.get("transparent") !== "0";
-  const OBS_TARGET_FPS = 0;
-  const OBS_QUALITY = "";
+  const OBS_INPUT_FETCH_TIMEOUT_MS = 2000;
 
   const ASSETS = {
     backHair: "assets/demo-avatar/back-hair.png",
@@ -82,6 +88,58 @@
     eyesClosedMouthHalf: "avatar/eyes-closed-mouth-half.png",
     eyesClosedMouthOpen: "avatar/eyes-closed-mouth-open.png",
   };
+  const DRAWN_AVATAR_SOURCE_KIND = "drawn-avatar";
+  const DRAWING_AVATAR_CANVAS_WIDTH = 1024;
+  const DRAWING_AVATAR_CANVAS_HEIGHT = 1536;
+  const DRAWING_AVATAR_MAX_ITEM_LAYERS = 8;
+  const DRAWING_AVATAR_MAX_HISTORY = 30;
+  const DRAWING_AVATAR_ONION_ALPHA = 0.35;
+  const DRAWING_AVATAR_FILL_TOLERANCE = 12;
+  // 目・口は「開き」の初期表示に合わせて、閉じ・中間・開けの差分レイヤーを最初はミュートにする。
+  const DRAWING_AVATAR_DEFAULT_MUTED_KEYS = new Set(["eyesClosed", "mouthHalf", "mouthOpen"]);
+  const DRAWING_AVATAR_FIXED_LAYERS = [
+    { key: "faceBase", label: "顔ベース" },
+    { key: "eyesOpen", label: "目・開け" },
+    { key: "eyesClosed", label: "目・閉じ" },
+    { key: "mouthClosed", label: "口・閉じ" },
+    { key: "mouthHalf", label: "口・中間" },
+    { key: "mouthOpen", label: "口・開け" },
+    { key: "frontHair", label: "前髪" },
+    { key: "backHair", label: "後ろ髪" },
+  ];
+  const DRAWING_AVATAR_REQUIRED_EXPRESSION_LAYER_KEYS = [
+    "faceBase",
+  ];
+  const DRAWING_AVATAR_DISTINCT_MOUTH_LAYER_PAIRS = [
+    ["mouthClosed", "mouthHalf"],
+    ["mouthHalf", "mouthOpen"],
+    ["mouthClosed", "mouthOpen"],
+  ];
+  // 合成6差分: 顔ベース + 目レイヤー + 口レイヤー。描かれていない差分は近い差分で代用する。
+  const DRAWING_AVATAR_FACE_COMBOS = [
+    { key: "eyesOpenMouthClosed", eyes: ["eyesOpen", "eyesClosed"], mouth: ["mouthClosed", "mouthHalf", "mouthOpen"] },
+    { key: "eyesOpenMouthHalf", eyes: ["eyesOpen", "eyesClosed"], mouth: ["mouthHalf", "mouthOpen", "mouthClosed"] },
+    { key: "eyesOpenMouthOpen", eyes: ["eyesOpen", "eyesClosed"], mouth: ["mouthOpen", "mouthHalf", "mouthClosed"] },
+    { key: "eyesClosedMouthClosed", eyes: ["eyesClosed", "eyesOpen"], mouth: ["mouthClosed", "mouthHalf", "mouthOpen"] },
+    { key: "eyesClosedMouthHalf", eyes: ["eyesClosed", "eyesOpen"], mouth: ["mouthHalf", "mouthOpen", "mouthClosed"] },
+    { key: "eyesClosedMouthOpen", eyes: ["eyesClosed", "eyesOpen"], mouth: ["mouthOpen", "mouthHalf", "mouthClosed"] },
+  ];
+  const DRAWING_AVATAR_EYE_LAYER_KEYS = ["eyesOpen", "eyesClosed"];
+  const DRAWING_AVATAR_MOUTH_LAYER_KEYS = ["mouthClosed", "mouthHalf", "mouthOpen"];
+  const DRAWING_AVATAR_LAYER_GROUPS = [
+    { label: "ベース", keys: ["faceBase"] },
+    { label: "目（差分）", keys: DRAWING_AVATAR_EYE_LAYER_KEYS },
+    { label: "口（差分）", keys: DRAWING_AVATAR_MOUTH_LAYER_KEYS },
+    { label: "髪", keys: ["frontHair", "backHair"] },
+  ];
+  const DRAWING_AVATAR_EXPRESSION_PREVIEWS = [
+    { eyes: "eyesOpen", mouth: "mouthClosed", label: "目開・口閉" },
+    { eyes: "eyesOpen", mouth: "mouthHalf", label: "目開・口中" },
+    { eyes: "eyesOpen", mouth: "mouthOpen", label: "目開・口開" },
+    { eyes: "eyesClosed", mouth: "mouthClosed", label: "目閉・口閉" },
+    { eyes: "eyesClosed", mouth: "mouthHalf", label: "目閉・口中" },
+    { eyes: "eyesClosed", mouth: "mouthOpen", label: "目閉・口開" },
+  ];
   const DEFORMER_COLS = 4;
   const DEFORMER_ROWS = 4;
   const DEFORMER_KEYS = ["center", "left", "right", "up", "down"];
@@ -113,16 +171,40 @@
   const ADJUST_SECTION_KEYS = {
     layout: ["avatarSize", "avatarX", "avatarY", "breathStrength", "rollStrength", "idleMotionEnabled"],
     face: ["rangeLeft", "rangeRight", "rangeUp", "rangeDown", "angleStrength", "followSpeed", "faceWarp", "angleXDeform", "angleYDeform", "faceTurnDepth", "faceTurnVertical", "diagonalFaceWarpEnabled"],
-    mouth: ["micGain", "mouthHalf", "mouthFull", "mouthRelease", "pyokoStrength"],
+    mouth: ["micGain", "mouthHalf", "mouthFull", "mouthRelease", "mouthCrossfadeMs", "pyokoStrength"],
     eyes: ["highlightEnabled", "highlightStrength", "highlightSize", "highlightAspect", "highlightFilmWobble", "subHighlightEnabled", "subHighlightSize", "subHighlightAspect", "subHighlightFilmWobble", "tearLensEnabled", "tearLensStrength", "tearLensRadiusX", "tearLensRadiusY", "tearLensRotationLeft", "tearLensRotationRight"],
     hair: ["hairVisible", "hairWarp", "hairSpring", "hairBundleStrength"],
     look: ["frontHairShadowEnabled", "frontHairShadowStrength", "frontHairShadowDistance", "bgColor", "hairColor", "hairTintLightness", "hairTintEnabled"],
   };
+  // キャラ1（assets/demo-avatar/default-settings.json）を基準にした共通リグ値。
+  // 顔の横向き変形と髪デフォーマの比率がキャラごとに変わると、髪だけ追従しない/顔だけ滑るため、
+  // お絵描き新規キャラや同梱デモキャラのデフォーマ初期値はこの基準へ揃える。
+  const STANDARD_AVATAR_RIG_STATE = Object.freeze({
+    angleStrength: 100,
+    faceWarp: 120,
+    angleXDeform: 60,
+    faceTurnDepth: 200,
+    faceTurnVertical: 150,
+    angleYDeform: 200,
+    hairWarp: 120,
+    hairSpring: 40,
+    hairBundleStrength: 100,
+    followSpeed: 60,
+    rangeLeft: 35,
+    rangeRight: 35,
+    rangeUp: 10,
+    rangeDown: 25,
+    diagonalFaceWarpEnabled: true,
+  });
   const OBS_PRESET_STORAGE_KEY = "purupuru-pngtuber-obs-preset-v1";
   const ACTIVE_CHARACTER_STORAGE_KEY = "purupuru-pngtuber-active-character-id-v1";
+  const DELETED_AUTO_CHARACTER_SOURCES_STORAGE_KEY = "purupuru-pngtuber-deleted-auto-character-sources-v1";
   const CHARACTER_DB_NAME = "purupuru-pngtuber-character-library-v1";
   const CHARACTER_DB_VERSION = 1;
   const CHARACTER_STORE_NAME = "characters";
+  const MAX_CHARACTER_PROFILES = 12;
+  const CHARACTER_STORAGE_WARNING_USAGE_RATIO = 0.85;
+  const CHARACTER_STORAGE_WARNING_BYTES = 400 * 1024 * 1024;
   const PURUPURU_PACKAGE_VERSION = 1;
   const MAX_PURUPURU_PACKAGE_SIZE = 80 * 1024 * 1024;
   const MAX_PURUPURU_UNZIPPED_SIZE = 120 * 1024 * 1024;
@@ -133,9 +215,15 @@
   const ZIP_UTF8_FLAG = 0x0800;
   const ZIP_STORE_METHOD = 0;
   const AVATAR_ASSET_THUMBNAIL_VERSION = "composite-v1";
+  const DEMO_AVATAR_DEFAULT_SETTINGS_MIGRATION_VERSION = "github-main-2026-07-03";
   const MAX_ITEM_IMAGE_FILE_SIZE = 3 * 1024 * 1024;
   const MAX_OBS_SNAPSHOT_JSON_BYTES = 24 * 1024 * 1024;
   const MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE = 12 * 1024 * 1024;
+  const MOUTH_CROSSFADE_DEFAULT_MS = 0;
+  const MOUTH_CROSSFADE_MAX_MS = 160;
+  const AUDIO_METER_MAX_LEVEL = 0.45;
+  const MAX_AVATAR_IMAGE_EDGE = 4096;
+  const MAX_AVATAR_IMAGE_PIXELS = 16 * 1024 * 1024;
   const MAX_ITEM_IMAGE_EDGE = 4096;
   const MAX_ITEM_IMAGE_PIXELS = 16 * 1024 * 1024;
   const MAX_ITEM_LAYER_COUNT = 20;
@@ -144,6 +232,11 @@
   const ITEM_INITIAL_MAX_HEIGHT_RATIO = 0.82;
   const ITEM_RESIZE_HANDLE_RADIUS = 18;
   const MAX_JSON_SANITIZE_DEPTH = 32;
+  const MAX_JSON_KEYS_PER_OBJECT = 2000;
+  const MAX_JSON_ARRAY_LENGTH = 2000;
+  const MAX_JSON_STRING_LENGTH = 4 * 1024 * 1024;
+  const MAX_JSON_DATA_URL_STRING_LENGTH = 5 * 1024 * 1024;
+  const MAX_JSON_NODE_COUNT = 50000;
   const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
   const HAIR_TINT_CACHE_LIMIT = 8;
   const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
@@ -217,6 +310,7 @@
     "mouthHalf",
     "mouthFull",
     "mouthRelease",
+    "mouthCrossfadeMs",
   ];
   const ALL_SETTINGS_BOOLEAN_KEYS = [
     "highlightEnabled",
@@ -258,6 +352,7 @@
     tearLensRadiusY: "px",
     tearLensRotationLeft: "°",
     tearLensRotationRight: "°",
+    mouthCrossfadeMs: "ms",
   };
   const EYE_LENS_LIMITS = {
     radiusX: { min: 20, max: 140 },
@@ -278,7 +373,7 @@
     angleYDeform: 200,
     hairVisible: true,
     hairWarp: 150,
-    hairSpring: 20,
+    hairSpring: 40,
     hairBundleStrength: 100,
     frontHairShadowStrength: 28,
     frontHairShadowDistance: 10,
@@ -334,6 +429,7 @@
     mouthHalf: 8,
     mouthFull: 22,
     mouthRelease: 18,
+    mouthCrossfadeMs: MOUTH_CROSSFADE_DEFAULT_MS,
   };
 
   function showStartupError(message) {
@@ -397,6 +493,7 @@
     characterSwitcherMenu: document.querySelector("#characterSwitcherMenu"),
     characterList: document.querySelector("#characterList"),
     addCharacterButton: document.querySelector("#addCharacterButton"),
+    drawingAvatarEditButton: document.querySelector("#drawingAvatarEditButton"),
     duplicateCharacterButton: document.querySelector("#duplicateCharacterButton"),
     addCharacterFileInput: document.querySelector("#addCharacterFileInput"),
     dockHideButton: document.querySelector("#dockHideButton"),
@@ -421,6 +518,47 @@
     characterWizardMoveRightButton: document.querySelector("#characterWizardMoveRightButton"),
     characterWizardMoveUpButton: document.querySelector("#characterWizardMoveUpButton"),
     characterWizardMoveDownButton: document.querySelector("#characterWizardMoveDownButton"),
+    drawingAvatarStartButton: document.querySelector("#drawingAvatarStartButton"),
+    drawingAvatarMenuButton: document.querySelector("#drawingAvatarMenuButton"),
+    drawingAvatarPanel: document.querySelector("#drawingAvatarPanel"),
+    drawingAvatarStatus: document.querySelector("#drawingAvatarStatus"),
+    drawingAvatarCancelButton: document.querySelector("#drawingAvatarCancelButton"),
+    drawingAvatarCanvasFrame: document.querySelector("#drawingAvatarCanvasFrame"),
+    drawingAvatarCanvas: document.querySelector("#drawingAvatarCanvas"),
+    drawingAvatarOverlay: document.querySelector("#drawingAvatarOverlay"),
+    drawingAvatarLayerList: document.querySelector("#drawingAvatarLayerList"),
+    drawingAvatarActiveLayerReadout: document.querySelector("#drawingAvatarActiveLayerReadout"),
+    drawingAvatarExpressionPreviewList: document.querySelector("#drawingAvatarExpressionPreviewList"),
+    drawingAvatarAddItemButton: document.querySelector("#drawingAvatarAddItemButton"),
+    drawingAvatarImportImageButton: document.querySelector("#drawingAvatarImportImageButton"),
+    drawingAvatarImageFileInput: document.querySelector("#drawingAvatarImageFileInput"),
+    drawingAvatarImageRemoveButton: document.querySelector("#drawingAvatarImageRemoveButton"),
+    drawingAvatarImageList: document.querySelector("#drawingAvatarImageList"),
+    drawingAvatarImageReadout: document.querySelector("#drawingAvatarImageReadout"),
+    drawingAvatarImageTransformControls: document.querySelector("#drawingAvatarImageTransformControls"),
+    drawingAvatarImageX: document.querySelector("#drawingAvatarImageX"),
+    drawingAvatarImageY: document.querySelector("#drawingAvatarImageY"),
+    drawingAvatarImageScale: document.querySelector("#drawingAvatarImageScale"),
+    drawingAvatarImageCenterButton: document.querySelector("#drawingAvatarImageCenterButton"),
+    drawingAvatarToolReadout: document.querySelector("#drawingAvatarToolReadout"),
+    drawingAvatarBrushButton: document.querySelector("#drawingAvatarBrushButton"),
+    drawingAvatarFillButton: document.querySelector("#drawingAvatarFillButton"),
+    drawingAvatarEraserButton: document.querySelector("#drawingAvatarEraserButton"),
+    drawingAvatarBrushSize: document.querySelector("#drawingAvatarBrushSize"),
+    drawingAvatarBrushSoftness: document.querySelector("#drawingAvatarBrushSoftness"),
+    drawingAvatarBrushStabilization: document.querySelector("#drawingAvatarBrushStabilization"),
+    drawingAvatarPressureEnabled: document.querySelector("#drawingAvatarPressureEnabled"),
+    drawingAvatarColorInput: document.querySelector("#drawingAvatarColorInput"),
+    drawingAvatarColorSwatches: document.querySelector("#drawingAvatarColorSwatches"),
+    drawingAvatarUndoButton: document.querySelector("#drawingAvatarUndoButton"),
+    drawingAvatarRedoButton: document.querySelector("#drawingAvatarRedoButton"),
+    drawingAvatarClearButton: document.querySelector("#drawingAvatarClearButton"),
+    drawingAvatarOnionSkin: document.querySelector("#drawingAvatarOnionSkin"),
+    drawingAvatarFinishButton: document.querySelector("#drawingAvatarFinishButton"),
+    drawingAvatarZoomOutButton: document.querySelector("#drawingAvatarZoomOutButton"),
+    drawingAvatarZoomLabelButton: document.querySelector("#drawingAvatarZoomLabelButton"),
+    drawingAvatarZoomInButton: document.querySelector("#drawingAvatarZoomInButton"),
+    drawingAvatarZoomFitButton: document.querySelector("#drawingAvatarZoomFitButton"),
     itemDropZone: document.querySelector("#itemDropZone"),
     itemFileInput: document.querySelector("#itemFileInput"),
     itemFileReadout: document.querySelector("#itemFileReadout"),
@@ -452,6 +590,8 @@
     audioError: document.querySelector("#audioError"),
     faceTrackStatus: document.querySelector("#faceTrackStatus"),
     meterFill: document.querySelector("#meterFill"),
+    meterHalfLine: document.querySelector("#meterHalfLine"),
+    meterFullLine: document.querySelector("#meterFullLine"),
     mouthReadout: document.querySelector("#mouthReadout"),
     angleReadout: document.querySelector("#angleReadout"),
     showMesh: document.querySelector("#showMesh"),
@@ -523,7 +663,9 @@
     "mouth",
     "chin",
     "neckPivot",
-    "hairBundles",
+    "hairFront",
+    "hairSide",
+    "hairBack",
     "finish",
   ];
   const CHARACTER_WIZARD_STEP_DEFS = {
@@ -576,16 +718,31 @@
       pointPath: ["neckPivot"],
       color: "#8b5cf6",
     },
-    hairBundles: {
-      label: "髪の線",
-      title: "髪束ラインを確認",
-      description: "白丸を髪の生え際、色丸を毛先に合わせてください。ズレた線だけドラッグで直せます。",
+    hairFront: {
+      label: "前髪の線",
+      title: "前髪の髪束ラインを確認",
+      description: "前髪3本だけ表示中。白丸を生え際、色丸を毛先に合わせてください。",
+      hairGroup: "front",
+      color: "#7db1a2",
+    },
+    hairSide: {
+      label: "横髪の線",
+      title: "横髪の髪束ラインを確認",
+      description: "横髪2本だけ表示中。白丸を生え際、色丸を毛先に合わせてください。",
+      hairGroup: "side",
+      color: "#7db1a2",
+    },
+    hairBack: {
+      label: "後ろ髪の線",
+      title: "後ろ髪の髪束ラインを確認",
+      description: "後ろ髪3本だけ表示中。白丸を生え際、色丸を毛先に合わせてください。",
+      hairGroup: "back",
       color: "#7db1a2",
     },
     finish: {
       label: "完了",
       title: "この設定で完了",
-      description: "7点と髪束ラインを既存設定へ反映し、ハイライト自動配置と基準値保存を行います。",
+      description: "7点と前髪・横髪・後ろ髪の髪束ラインを既存設定へ反映し、ハイライト自動配置と基準値保存を行います。",
       color: "#d96c4f",
     },
   };
@@ -599,6 +756,8 @@
   let panelRectCacheAt = 0;
   let resizePending = false;
   let lastTimestamp = 0;
+  let mainRafId = null;
+  let mainAnimationPaused = false;
   let obsLastFrameAt = 0;
   let obsPublishEnabled = false;
   let obsPresetKey = DEFAULT_OBS_PRESET;
@@ -618,6 +777,7 @@
   };
   let obsEventSource = null;
   let obsEventReconnectTimer = null;
+  let obsLastEventId = 0;
   let animationSeconds = 0;
   let motionFrameId = 0;
   let headOffsetCacheFrame = -1;
@@ -642,6 +802,9 @@
   let neckPivotCacheEyesSource = null;
   let neckPivotCache = null;
   let mouthState = 0;
+  let mouthBlendFromState = 0;
+  let mouthBlendToState = 0;
+  let mouthBlendStartedAt = -10000;
   let blinkClosed = false;
   let blinkTimer = null;
   let blinkEvent = null;
@@ -681,6 +844,8 @@
   let hairBundleSpringStates = null;
   let micOn = false;
   let micPending = false;
+  let restoreMicAfterPageShow = false;
+  let restoreFaceTrackAfterPageShow = false;
   let deformers = null;
   let editDrag = null;
   let eyeSetupDrag = null;
@@ -711,11 +876,19 @@
   let characterProfilesCache = [];
   let characterAutosaveTimer = null;
   let characterAutosavePromise = Promise.resolve();
+  let characterProfileMutationPromise = Promise.resolve();
+  let characterStorageWarningShown = false;
   let characterDirty = {
     settings: false,
     avatarImages: false,
     itemImages: false,
     thumbnail: false,
+  };
+  const characterDirtyRevision = {
+    settings: 0,
+    avatarImages: 0,
+    itemImages: 0,
+    thumbnail: 0,
   };
 
   const audioEngine = createAudioEngine();
@@ -727,6 +900,14 @@
 
   function lerp(a, b, t) {
     return a + (b - a) * t;
+  }
+
+  function frameIndependentLerpFactor(perFrameFactor, delta, baseFps = 60) {
+    const factor = clamp(perFrameFactor, 0, 1);
+    const seconds = Math.max(0, Number(delta) || 0);
+    if (factor <= 0 || seconds <= 0) return 0;
+    if (factor >= 1) return 1;
+    return 1 - Math.pow(1 - factor, seconds * baseFps);
   }
 
   function setupModeActive() {
@@ -908,18 +1089,36 @@
     return true;
   }
 
-  function sanitizeImportedJsonValue(value, depth = 0) {
+  function sanitizeImportedJsonValue(value, depth = 0, budget = null) {
+    const counter = budget || { nodes: 0 };
+    counter.nodes += 1;
+    if (counter.nodes > MAX_JSON_NODE_COUNT) {
+      throw new Error("設定ファイルの要素数が多すぎます。");
+    }
     if (depth > MAX_JSON_SANITIZE_DEPTH) {
       throw new Error("設定ファイルの階層が深すぎます。");
     }
+    const maxStringLength = (typeof value === "string" && value.startsWith(PNG_DATA_URL_PREFIX))
+      ? MAX_JSON_DATA_URL_STRING_LENGTH
+      : MAX_JSON_STRING_LENGTH;
+    if (typeof value === "string" && value.length > maxStringLength) {
+      throw new Error("設定ファイル内の文字列が大きすぎます。");
+    }
     if (Array.isArray(value)) {
-      return value.map((item) => sanitizeImportedJsonValue(item, depth + 1));
+      if (value.length > MAX_JSON_ARRAY_LENGTH) {
+        throw new Error("設定ファイルの配列が大きすぎます。");
+      }
+      return value.map((item) => sanitizeImportedJsonValue(item, depth + 1, counter));
     }
     if (value && typeof value === "object") {
+      const entries = Object.entries(value);
+      if (entries.length > MAX_JSON_KEYS_PER_OBJECT) {
+        throw new Error("設定ファイルの項目数が多すぎます。");
+      }
       const sanitized = Object.create(null);
-      for (const [key, child] of Object.entries(value)) {
+      for (const [key, child] of entries) {
         if (FORBIDDEN_JSON_KEYS.has(key)) continue;
-        sanitized[key] = sanitizeImportedJsonValue(child, depth + 1);
+        sanitized[key] = sanitizeImportedJsonValue(child, depth + 1, counter);
       }
       return sanitized;
     }
@@ -1489,12 +1688,45 @@
     }
   }
 
-  function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
-    return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
+  function pngU8Dimensions(u8, name = "PNG") {
+    assertPngU8(u8, name);
+    if (u8.length < 24) {
+      throw new Error(`${name} のPNGヘッダーが壊れています。`);
+    }
+    const view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const ihdrLength = view.getUint32(8, false);
+    const isIhdr =
+      u8[12] === 0x49 &&
+      u8[13] === 0x48 &&
+      u8[14] === 0x44 &&
+      u8[15] === 0x52;
+    if (ihdrLength !== 13 || !isIhdr) {
+      throw new Error(`${name} のPNGヘッダーが壊れています。`);
+    }
+    return {
+      w: view.getUint32(16, false),
+      h: view.getUint32(20, false),
+    };
   }
 
-  function resolveDefaultSettingsAssetUrl(path) {
-    return resolveSettingsAssetUrl(path, DEFAULT_SETTINGS_URL);
+  function validateAvatarImageSize(size, name = "キャラ素材") {
+    const w = Math.round(Number(size?.w ?? size?.width) || 0);
+    const h = Math.round(Number(size?.h ?? size?.height) || 0);
+    if (
+      w <= 0 ||
+      h <= 0 ||
+      w > MAX_AVATAR_IMAGE_EDGE ||
+      h > MAX_AVATAR_IMAGE_EDGE ||
+      w * h > MAX_AVATAR_IMAGE_PIXELS
+    ) {
+      const maxPixelsText = `${Math.floor(MAX_AVATAR_IMAGE_PIXELS / 10000)}万`;
+      throw new Error(`${name} の画像サイズが大きすぎます。長辺${MAX_AVATAR_IMAGE_EDGE}px以内・合計${maxPixelsText}画素以内のPNGを選んでください。`);
+    }
+    return { w, h };
+  }
+
+  function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
+    return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
   }
 
   async function fetchPngDataUrl(path, name = "PNGアイテム", settingsUrl = DEFAULT_SETTINGS_URL) {
@@ -1514,10 +1746,6 @@
     return payload;
   }
 
-  async function hydrateDefaultItemLayerSources(payload) {
-    return hydrateItemLayerSources(payload, DEFAULT_SETTINGS_URL);
-  }
-
   async function loadSettingsPayloadFromUrl(settingsUrl = DEFAULT_SETTINGS_URL) {
     const response = await fetch(settingsUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`デフォルト設定を読み込めませんでした: ${response.status}`);
@@ -1532,7 +1760,7 @@
   function loadPngImageFromU8(u8, name = "PNG") {
     return new Promise((resolve, reject) => {
       try {
-        assertPngU8(u8, name);
+        validateAvatarImageSize(pngU8Dimensions(u8, name), name);
       } catch (error) {
         reject(error);
         return;
@@ -1560,9 +1788,7 @@
 
   function validateAvatarImageDimensions(image, key = "キャラ素材", expectedSize = null) {
     const size = avatarImageDimensions(image);
-    if (size.w <= 0 || size.h <= 0) {
-      throw new Error(`${key} の画像サイズが不正です: ${size.w}x${size.h}`);
-    }
+    validateAvatarImageSize(size, key);
     if (expectedSize && (size.w !== expectedSize.w || size.h !== expectedSize.h)) {
       throw new Error(`${key} のサイズが他のキャラ素材と一致しません。期待: ${expectedSize.w}x${expectedSize.h} / 実際: ${size.w}x${size.h}`);
     }
@@ -2044,7 +2270,9 @@
       }
     };
     const next = itemMutationChain.then(run, run);
-    itemMutationChain = next.catch(() => {});
+    itemMutationChain = next.catch((error) => {
+      console.warn("アイテム処理キューでエラーが発生しました。", error);
+    });
     return next;
   }
 
@@ -2613,15 +2841,18 @@
   }
 
   function currentObsRenderFps() {
-    return OBS_TARGET_FPS || currentObsPreset().fps;
+    return currentObsPreset().fps;
   }
 
   function currentObsQuality() {
-    return OBS_QUALITY || currentObsPreset().quality;
+    return currentObsPreset().quality;
   }
 
   function currentObsUrl() {
     const url = new URL(window.location.href);
+    if (!["127.0.0.1", "localhost"].includes(url.hostname)) {
+      url.hostname = "127.0.0.1";
+    }
     url.search = "";
     url.hash = "";
     url.searchParams.set("mode", "obs");
@@ -2760,6 +2991,13 @@
       return characterProfileDbPromise;
     }
     characterProfileDbPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const failOpen = (error) => {
+        if (settled) return;
+        settled = true;
+        characterProfileDbPromise = null;
+        reject(error);
+      };
       const request = indexedDB.open(CHARACTER_DB_NAME, CHARACTER_DB_VERSION);
       request.onupgradeneeded = () => {
         const db = request.result;
@@ -2769,8 +3007,16 @@
         if (!store.indexNames.contains("updatedAt")) store.createIndex("updatedAt", "updatedAt");
         if (!store.indexNames.contains("lastUsedAt")) store.createIndex("lastUsedAt", "lastUsedAt");
       };
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error || new Error("キャラライブラリDBを開けませんでした。"));
+      request.onsuccess = () => {
+        if (settled) {
+          request.result?.close?.();
+          return;
+        }
+        settled = true;
+        resolve(request.result);
+      };
+      request.onerror = () => failOpen(request.error || new Error("キャラライブラリDBを開けませんでした。"));
+      request.onblocked = () => failOpen(new Error("キャラライブラリDBの更新がブロックされました。別タブで開いているぷるぷるPNGTuberを閉じて再読み込みしてください。"));
     });
     return characterProfileDbPromise;
   }
@@ -2803,17 +3049,75 @@
     return requestToPromise(store.get(String(id)));
   }
 
-  async function putCharacterProfile(record) {
-    const store = await characterStore("readwrite");
-    await requestToPromise(store.put(record));
-    await listCharacterProfiles();
-    return record;
+  function characterProfileRecordForStorage(record) {
+    return {
+      ...record,
+      cachedPackageBlob: null,
+      cachedPackageUpdatedAt: null,
+    };
   }
 
-  async function patchCharacterProfile(id, patch) {
-    const current = await getCharacterProfile(id);
-    if (!current) throw new Error("キャラプロファイルが見つかりません。");
-    return putCharacterProfile({ ...current, ...patch, id: current.id });
+  async function characterStorageEstimate() {
+    try {
+      return await globalThis.navigator?.storage?.estimate?.();
+    } catch (error) {
+      console.warn("キャラ保存容量の推定に失敗しました。", error);
+      return null;
+    }
+  }
+
+  function warnIfCharacterStorageNearLimit(estimate) {
+    if (characterStorageWarningShown || !estimate) return;
+    const usage = Number(estimate.usage) || 0;
+    const quota = Number(estimate.quota) || 0;
+    const ratio = quota > 0 ? usage / quota : 0;
+    if (usage < CHARACTER_STORAGE_WARNING_BYTES && ratio < CHARACTER_STORAGE_WARNING_USAGE_RATIO) return;
+    characterStorageWarningShown = true;
+    const message = "ブラウザの保存容量が少なくなっています。不要なキャラを削除するか、.purupuru でバックアップしてください。";
+    console.warn(message, { usage, quota });
+    setEditStatus(message);
+  }
+
+  function enqueueCharacterProfileMutation(operation) {
+    const run = characterProfileMutationPromise.then(operation, operation);
+    characterProfileMutationPromise = run.catch(() => {});
+    return run;
+  }
+
+  async function putCharacterProfileRecord(record) {
+    const storedRecord = characterProfileRecordForStorage(record);
+    const storageEstimate = await characterStorageEstimate();
+    const profileList = await listCharacterProfiles().catch(() => characterProfilesCache);
+    const isNewProfile = !profileList.some((profile) => String(profile.id) === String(storedRecord.id));
+    if (isNewProfile && profileList.length >= MAX_CHARACTER_PROFILES) {
+      throw new Error(`キャラは最大${MAX_CHARACTER_PROFILES}件まで保存できます。不要なキャラを削除するか .purupuru でバックアップしてください。`);
+    }
+    warnIfCharacterStorageNearLimit(storageEstimate);
+    const store = await characterStore("readwrite");
+    await requestToPromise(store.put(storedRecord));
+    await listCharacterProfiles();
+    return storedRecord;
+  }
+
+  function putCharacterProfile(record) {
+    return enqueueCharacterProfileMutation(() => putCharacterProfileRecord(record));
+  }
+
+  function deleteCharacterProfileRecord(id) {
+    return enqueueCharacterProfileMutation(async () => {
+      const store = await characterStore("readwrite");
+      await requestToPromise(store.delete(String(id)));
+      await listCharacterProfiles();
+      return true;
+    });
+  }
+
+  function patchCharacterProfile(id, patch) {
+    return enqueueCharacterProfileMutation(async () => {
+      const current = await getCharacterProfile(id);
+      if (!current) throw new Error("キャラプロファイルが見つかりません。");
+      return putCharacterProfileRecord({ ...current, ...patch, id: current.id });
+    });
   }
 
   async function touchCharacterProfile(id) {
@@ -2842,6 +3146,61 @@
     } catch {
       return null;
     }
+  }
+
+  function isAutoSeededCharacterSourceKind(kind) {
+    return kind === DEMO_AVATAR02_SOURCE_KIND || kind === DEMO_AVATAR03_SOURCE_KIND;
+  }
+
+  function sourceMapIncludesPath(assetMap, pathPart) {
+    if (!assetMap || typeof assetMap !== "object") return false;
+    return Object.values(assetMap).some((value) => String(value || "").includes(pathPart));
+  }
+
+  function managedDemoAvatarSourceKindForProfile(record) {
+    const kind = String(record?.source?.kind || "");
+    if (isAutoSeededCharacterSourceKind(kind)) return kind;
+
+    const settingsUrl = String(record?.source?.settingsUrl || "");
+    if (settingsUrl.includes("assets/demo-avatar02/")) return DEMO_AVATAR02_SOURCE_KIND;
+    if (settingsUrl.includes("assets/demo-avatar03/")) return DEMO_AVATAR03_SOURCE_KIND;
+
+    const assetMap = record?.source?.assetMap;
+    if (sourceMapIncludesPath(assetMap, "assets/demo-avatar02/")) return DEMO_AVATAR02_SOURCE_KIND;
+    if (sourceMapIncludesPath(assetMap, "assets/demo-avatar03/")) return DEMO_AVATAR03_SOURCE_KIND;
+    return "";
+  }
+
+  function managedDefaultSettingsVersionForSourceKind(kind) {
+    return isAutoSeededCharacterSourceKind(kind) ? DEMO_AVATAR_DEFAULT_SETTINGS_MIGRATION_VERSION : null;
+  }
+
+  function managedDefaultSettingsVersionForCharacterProfile(record) {
+    return managedDefaultSettingsVersionForSourceKind(managedDemoAvatarSourceKindForProfile(record) || record?.source?.kind);
+  }
+
+  function readDeletedAutoCharacterSourceKinds() {
+    try {
+      const parsed = sanitizeImportedJsonValue(JSON.parse(localStorage.getItem(DELETED_AUTO_CHARACTER_SOURCES_STORAGE_KEY) || "[]"));
+      return new Set(Array.isArray(parsed) ? parsed.map((value) => String(value)) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  function rememberDeletedAutoCharacterSourceKind(kind) {
+    if (!isAutoSeededCharacterSourceKind(kind)) return;
+    const deleted = readDeletedAutoCharacterSourceKinds();
+    deleted.add(String(kind));
+    try {
+      localStorage.setItem(DELETED_AUTO_CHARACTER_SOURCES_STORAGE_KEY, JSON.stringify([...deleted]));
+    } catch {
+      // localStorageが使えない場合は、今回の削除だけ反映して続行する。
+    }
+  }
+
+  function autoCharacterSourceWasDeleted(kind) {
+    return isAutoSeededCharacterSourceKind(kind) && readDeletedAutoCharacterSourceKinds().has(String(kind));
   }
 
   function currentWorkspacePage() {
@@ -2893,6 +3252,7 @@
     ui.characterSwitcher?.classList.toggle("is-busy", Boolean(disabled));
     if (ui.characterSwitcherButton) ui.characterSwitcherButton.disabled = Boolean(disabled);
     if (ui.addCharacterButton) ui.addCharacterButton.disabled = Boolean(disabled);
+    if (ui.drawingAvatarEditButton) ui.drawingAvatarEditButton.disabled = Boolean(disabled) || activeCharacterSourceKind !== DRAWN_AVATAR_SOURCE_KIND;
     if (ui.duplicateCharacterButton) ui.duplicateCharacterButton.disabled = Boolean(disabled) || !activeCharacterId;
   }
 
@@ -2921,6 +3281,7 @@
       case "purupuru": return "ファイル追加";
       case "duplicate": return "複製";
       case "default": return "初期キャラ";
+      case DRAWN_AVATAR_SOURCE_KIND: return "お絵描き";
       case DEMO_AVATAR02_SOURCE_KIND:
       case DEMO_AVATAR03_SOURCE_KIND:
         return "同梱キャラ";
@@ -2928,7 +3289,11 @@
     }
   }
 
-  function renderCharacterCard(profile) {
+  function renderCharacterCard(profile, { canDelete = true } = {}) {
+    const shell = document.createElement("div");
+    shell.className = "character-card-shell";
+    shell.setAttribute("role", "none");
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "character-card";
@@ -2960,7 +3325,19 @@
     badge.className = "character-card-badge";
     badge.textContent = profile.id === activeCharacterId ? "現在" : "切替";
     button.append(main, badge);
-    return button;
+
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "ghost-button icon-button danger-button character-card-delete";
+    deleteButton.dataset.characterDeleteId = profile.id;
+    deleteButton.title = canDelete ? "キャラを削除" : "最後のキャラは削除できません";
+    deleteButton.setAttribute("role", "menuitem");
+    deleteButton.setAttribute("aria-label", `${profile.name || "未設定キャラ"} を削除`);
+    deleteButton.disabled = !canDelete;
+    deleteButton.textContent = "×";
+
+    shell.append(button, deleteButton);
+    return shell;
   }
 
   function renderEmptyCharacterCard(index) {
@@ -2998,10 +3375,15 @@
       else ui.activeCharacterThumb.removeAttribute("src");
     }
     updateCharacterSaveStatus(characterSaveStatusText);
+    if (ui.drawingAvatarEditButton) {
+      const canEditDrawn = active?.source?.kind === DRAWN_AVATAR_SOURCE_KIND;
+      ui.drawingAvatarEditButton.hidden = !canEditDrawn;
+      ui.drawingAvatarEditButton.disabled = !canEditDrawn || characterSwitching;
+    }
     if (ui.duplicateCharacterButton) ui.duplicateCharacterButton.disabled = !activeCharacterId || characterSwitching;
     if (!ui.characterList) return;
     ui.characterList.textContent = "";
-    profiles.forEach((profile) => ui.characterList.append(renderCharacterCard(profile)));
+    profiles.forEach((profile) => ui.characterList.append(renderCharacterCard(profile, { canDelete: profiles.length > 1 })));
     for (let i = profiles.length; i < 3; i += 1) ui.characterList.append(renderEmptyCharacterCard(i + 1));
   }
 
@@ -3157,6 +3539,15 @@
     return settings;
   }
 
+  function applyStandardAvatarRigBaseline(settingsPayload) {
+    if (!settingsPayload || typeof settingsPayload !== "object") return settingsPayload;
+    settingsPayload.state = {
+      ...(settingsPayload.state || {}),
+      ...STANDARD_AVATAR_RIG_STATE,
+    };
+    return settingsPayload;
+  }
+
   async function loadAvatarImagesFromAssetMap(assetMap) {
     const loaded = {};
     let expectedAvatarSize = null;
@@ -3192,6 +3583,7 @@
       ? await loadSettingsPayloadFromUrl(settingsUrl)
       : buildAllSettingsPayload({ includeItemImages: false, includeBaseline: true });
     const defaultSettingsSignature = settingsUrl ? settingsPayloadSignature(templatePayload) : null;
+    const defaultSettingsMigrationVersion = settingsUrl ? managedDefaultSettingsVersionForSourceKind(sourceKind) : null;
     const templateSize = settingsUrl
       ? (templatePayload.avatarImageSize || { width: size.w, height: size.h })
       : fromSize;
@@ -3229,6 +3621,7 @@
         settingsUrl,
         assetSignature,
         ...(defaultSettingsSignature ? { defaultSettingsSignature } : {}),
+        ...(defaultSettingsMigrationVersion ? { defaultSettingsMigrationVersion } : {}),
         thumbnailVersion: AVATAR_ASSET_THUMBNAIL_VERSION,
       },
       lastError: null,
@@ -3239,7 +3632,6 @@
     id = createCharacterId(),
     name = "新しいキャラ",
     source = { kind: "current", fileName: null },
-    includeCachedPackage = false,
   } = {}) {
     if (!imagesReady) throw new Error("キャラ素材の読み込みが完了していません。");
     const now = new Date().toISOString();
@@ -3260,11 +3652,6 @@
       source,
       lastError: null,
     };
-    if (includeCachedPackage) {
-      const zipU8 = await buildPuruPuruPackagePayload();
-      record.cachedPackageBlob = new Blob([zipU8], { type: "application/vnd.purupuru.avatar+zip" });
-      record.cachedPackageUpdatedAt = now;
-    }
     return record;
   }
 
@@ -3284,31 +3671,33 @@
       settingsPayload: parsed.settingsPayload,
       avatarImageBlobs: parsed.avatarImageBlobs,
       itemImageBlobs: parsed.itemImageBlobs,
-      cachedPackageBlob: file,
-      cachedPackageUpdatedAt: now,
+      cachedPackageBlob: null,
+      cachedPackageUpdatedAt: null,
       source: { kind: "purupuru", fileName: file.name || null },
       lastError: null,
     };
   }
 
   function assetMapForCharacterProfile(record) {
-    if (record?.source?.assetMap && typeof record.source.assetMap === "object") return record.source.assetMap;
-    switch (record?.source?.kind) {
+    switch (managedDemoAvatarSourceKindForProfile(record) || record?.source?.kind) {
       case "default": return ASSETS;
       case DEMO_AVATAR02_SOURCE_KIND: return DEMO_AVATAR02_ASSETS;
       case DEMO_AVATAR03_SOURCE_KIND: return DEMO_AVATAR03_ASSETS;
-      default: return null;
+      default: break;
     }
+    if (record?.source?.assetMap && typeof record.source.assetMap === "object") return record.source.assetMap;
+    return null;
   }
 
   function settingsUrlForCharacterProfile(record) {
-    if (record?.source?.settingsUrl) return String(record.source.settingsUrl);
-    switch (record?.source?.kind) {
+    switch (managedDemoAvatarSourceKindForProfile(record) || record?.source?.kind) {
       case "default": return DEFAULT_SETTINGS_URL;
       case DEMO_AVATAR02_SOURCE_KIND: return DEMO_AVATAR02_SETTINGS_URL;
       case DEMO_AVATAR03_SOURCE_KIND: return DEMO_AVATAR03_SETTINGS_URL;
-      default: return null;
+      default: break;
     }
+    if (record?.source?.settingsUrl) return String(record.source.settingsUrl);
+    return null;
   }
 
   function settingsPayloadSignature(payload) {
@@ -3425,8 +3814,17 @@
     if (!settingsUrl) return null;
     const defaultPayload = await loadSettingsPayloadFromUrl(settingsUrl);
     const defaultSettingsSignature = settingsPayloadSignature(defaultPayload);
-    if (record.source?.defaultSettingsSignature === defaultSettingsSignature) {
-      return { changed: false, defaultSettingsSignature };
+    const defaultSettingsMigrationVersion = managedDefaultSettingsVersionForCharacterProfile(record);
+    const signatureMatches = record.source?.defaultSettingsSignature === defaultSettingsSignature;
+    const migrationMatches =
+      !defaultSettingsMigrationVersion ||
+      record.source?.defaultSettingsMigrationVersion === defaultSettingsMigrationVersion;
+    if (signatureMatches && migrationMatches) {
+      return {
+        changed: false,
+        defaultSettingsSignature,
+        ...(defaultSettingsMigrationVersion ? { defaultSettingsMigrationVersion } : {}),
+      };
     }
 
     const templateSize = defaultPayload.avatarImageSize || { width: avatarSize.w, height: avatarSize.h };
@@ -3436,6 +3834,7 @@
     return {
       changed: true,
       defaultSettingsSignature,
+      ...(defaultSettingsMigrationVersion ? { defaultSettingsMigrationVersion } : {}),
       settingsPayload,
       itemImageBlobs,
     };
@@ -3444,6 +3843,7 @@
   async function refreshAssetBackedCharacterProfileAssets(record, { persist = true } = {}) {
     const assetMap = assetMapForCharacterProfile(record);
     if (!record || !assetMap) return record;
+    const managedSourceKind = managedDemoAvatarSourceKindForProfile(record);
     const { loadedImages, size } = await loadAvatarImagesFromAssetMap(assetMap);
     const avatarImageBlobs = await avatarImageBlobsFromLoadedImages(loadedImages);
     const assetSignature = await avatarImageBlobsSignature(avatarImageBlobs);
@@ -3477,7 +3877,7 @@
       cachedPackageUpdatedAt: null,
       source: {
         ...(record.source || {}),
-        kind: record.source?.kind || "asset",
+        kind: managedSourceKind || record.source?.kind || "asset",
         fileName: null,
         assetMap: { ...assetMap },
         ...(settingsUrl ? { settingsUrl } : {}),
@@ -3485,6 +3885,9 @@
         thumbnailVersion: AVATAR_ASSET_THUMBNAIL_VERSION,
         ...(defaultSettingsRefresh?.defaultSettingsSignature
           ? { defaultSettingsSignature: defaultSettingsRefresh.defaultSettingsSignature }
+          : {}),
+        ...(defaultSettingsRefresh?.defaultSettingsMigrationVersion
+          ? { defaultSettingsMigrationVersion: defaultSettingsRefresh.defaultSettingsMigrationVersion }
           : {}),
       },
       lastError: null,
@@ -3549,20 +3952,24 @@
   function markActiveCharacterDirty(kind = "settings", reason = "") {
     if (!characterLibraryReady || !activeCharacterId) return;
     if (suspendCharacterDirtyTracking > 0 || characterSwitching) return;
+    const markDirtyKey = (key) => {
+      characterDirty[key] = true;
+      characterDirtyRevision[key] += 1;
+    };
     if (kind === "avatarImages") {
-      characterDirty.avatarImages = true;
-      characterDirty.itemImages = true;
-      characterDirty.thumbnail = true;
-      characterDirty.settings = true;
+      markDirtyKey("avatarImages");
+      markDirtyKey("itemImages");
+      markDirtyKey("thumbnail");
+      markDirtyKey("settings");
     } else if (kind === "itemImages") {
-      characterDirty.itemImages = true;
-      characterDirty.thumbnail = true;
-      characterDirty.settings = true;
+      markDirtyKey("itemImages");
+      markDirtyKey("thumbnail");
+      markDirtyKey("settings");
     } else if (kind === "thumbnail") {
-      characterDirty.thumbnail = true;
+      markDirtyKey("thumbnail");
     } else {
-      characterDirty.settings = true;
-      characterDirty.thumbnail = true;
+      markDirtyKey("settings");
+      markDirtyKey("thumbnail");
     }
     updateCharacterSaveStatus("未保存");
     scheduleActiveCharacterAutosave(reason);
@@ -3589,22 +3996,40 @@
       updateCharacterSaveStatus("保存済み");
       return true;
     }
+    const saveCharacterId = activeCharacterId;
+    const dirtyAtStart = { ...characterDirty };
+    const revisionAtStart = { ...characterDirtyRevision };
+    const savePlan = {
+      settings: forceSettings || dirtyAtStart.settings,
+      avatarImages: forceAssets || dirtyAtStart.avatarImages,
+      itemImages: forceAssets || dirtyAtStart.itemImages,
+      thumbnail: forceAssets || dirtyAtStart.thumbnail || dirtyAtStart.settings,
+    };
     characterAutosavePromise = characterAutosavePromise.then(async () => {
+      if (!saveCharacterId) return false;
       updateCharacterSaveStatus("保存中…");
       const patch = {
         updatedAt: new Date().toISOString(),
         avatarImageSize: { width: CROP.w, height: CROP.h },
         lastError: null,
       };
-      if (forceSettings || characterDirty.settings) {
+      if (savePlan.settings) {
         patch.settingsPayload = buildAllSettingsPayload({ includeItemImages: false, includeBaseline: true });
       }
-      if (forceAssets || characterDirty.avatarImages) patch.avatarImageBlobs = await collectAvatarImageBlobsFromRuntime();
-      if (forceAssets || characterDirty.itemImages) patch.itemImageBlobs = collectItemImageBlobsFromRuntime();
-      if (forceAssets || characterDirty.thumbnail || characterDirty.settings) patch.thumbnailDataUrl = await captureCharacterThumbnailDataUrl();
-      await patchCharacterProfile(activeCharacterId, patch);
-      characterDirty = { settings: false, avatarImages: false, itemImages: false, thumbnail: false };
-      updateCharacterSaveStatus("保存済み");
+      if (savePlan.avatarImages) patch.avatarImageBlobs = await collectAvatarImageBlobsFromRuntime();
+      if (savePlan.itemImages) patch.itemImageBlobs = collectItemImageBlobsFromRuntime();
+      if (savePlan.thumbnail) patch.thumbnailDataUrl = await captureCharacterThumbnailDataUrl();
+      await patchCharacterProfile(saveCharacterId, patch);
+      if (activeCharacterId === saveCharacterId) {
+        for (const key of Object.keys(savePlan)) {
+          if (savePlan[key] && characterDirtyRevision[key] === revisionAtStart[key]) {
+            characterDirty[key] = false;
+          }
+        }
+        const stillDirty = Object.values(characterDirty).some(Boolean);
+        updateCharacterSaveStatus(stillDirty ? "未保存" : "保存済み");
+        if (stillDirty) scheduleActiveCharacterAutosave(reason || "autosave-during-save");
+      }
       await updateCharacterSwitcherUi();
       return true;
     }).catch(async (error) => {
@@ -3625,6 +4050,25 @@
     if (characterDrag || itemDrag || editDrag || eyeSetupDrag || highlightSetupDrag || faceDepthSetupDrag || neckPivotSetupDrag || hairBundleSetupDrag) return false;
     if (interactionModeActive()) return false;
     return true;
+  }
+
+  function prepareDrawingAvatarFinishInteractionState() {
+    // お絵描き完成は内部的に「新キャラへ切り替え」を行う。
+    // 既存の新キャラウィザードや各種セットアップが残っていると切り替え不可になり、
+    // 完成ボタンを押しても進まないように見えるため、完成前に競合する編集状態だけ閉じる。
+    if (characterWizard?.active) closeCharacterWizard({ restore: true });
+    setActiveSetupTool(null);
+    state.editMode = false;
+    state.rangePreviewDirection = null;
+    characterDrag = null;
+    itemDrag = null;
+    editDrag = null;
+    eyeSetupDrag = null;
+    highlightSetupDrag = null;
+    faceDepthSetupDrag = null;
+    neckPivotSetupDrag = null;
+    hairBundleSetupDrag = null;
+    syncAllSettingControls();
   }
 
   async function switchCharacterProfile(nextId) {
@@ -3739,9 +4183,2155 @@
     }
   }
 
+  async function deleteCharacterProfile(id) {
+    const targetId = String(id || "");
+    if (!targetId || !characterLibraryReady) return false;
+    if (!canSwitchCharacterNow()) {
+      setEditStatus("編集中・設定中はキャラを削除できません。編集を完了または中止してください。");
+      return false;
+    }
+
+    const profiles = await listCharacterProfiles().catch(() => characterProfilesCache);
+    const target = profiles.find((profile) => profile.id === targetId);
+    if (!target) {
+      setEditStatus("削除するキャラが見つかりません。");
+      await updateCharacterSwitcherUi();
+      return false;
+    }
+    if (profiles.length <= 1) {
+      setEditStatus("最後の1キャラは削除できません。先に別キャラを追加してください。");
+      await updateCharacterSwitcherUi();
+      return false;
+    }
+
+    const targetName = target.name || "未設定キャラ";
+    if (!window.confirm(`「${targetName}」を削除しますか？この操作は元に戻せません。必要なら先に .purupuru 保存してください。`)) {
+      return false;
+    }
+
+    const deletingActive = targetId === activeCharacterId;
+    const fallbackProfile = deletingActive ? profiles.find((profile) => profile.id !== targetId) : null;
+    let fallbackRecord = null;
+    try {
+      updateCharacterSwitcherDisabled(true);
+      characterSwitching = true;
+      updateCharacterSaveStatus("削除中…");
+      if (deletingActive) {
+        clearTimeout(characterAutosaveTimer);
+        await characterAutosavePromise.catch(() => false);
+        characterDirty = { settings: false, avatarImages: false, itemImages: false, thumbnail: false };
+        fallbackRecord = fallbackProfile ? await getCharacterProfile(fallbackProfile.id) : null;
+        if (!fallbackRecord) throw new Error("削除後に切り替えるキャラが見つかりません。");
+      } else {
+        await flushActiveCharacterAutosave({ reason: "delete-before", forceSettings: true, allowDuringSwitch: true });
+      }
+
+      await deleteCharacterProfileRecord(targetId);
+      rememberDeletedAutoCharacterSourceKind(managedDemoAvatarSourceKindForProfile(target) || target.source?.kind);
+
+      if (deletingActive) {
+        await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true });
+        activeCharacterId = fallbackRecord.id;
+        rememberActiveCharacterId(fallbackRecord.id);
+        activeCharacterSourceKind = String(fallbackRecord.source?.kind || "");
+        updateCharacterSaveStatus("保存済み");
+      }
+
+      setEditStatus(`「${targetName}」を削除しました。`);
+      return true;
+    } catch (error) {
+      console.warn("キャラ削除に失敗しました。", error);
+      setEditStatus(error instanceof Error ? error.message : "キャラ削除に失敗しました。");
+      updateCharacterSaveStatus("保存失敗");
+      return false;
+    } finally {
+      characterSwitching = false;
+      updateCharacterSwitcherDisabled(false);
+      await updateCharacterSwitcherUi();
+    }
+  }
+
+  // ---- お絵描きアバター（drawn avatar） ----
+  // 外部PNGなしで、アプリ内キャンバスに描いた絵から既存アバター仕様（6表情差分 + 前髪 + 後ろ髪 + アイテム）を生成する。
+  let drawingAvatarSession = null;
+  let drawingAvatarStroke = null;
+  let drawingAvatarPan = null;
+  let drawingAvatarSpaceDown = false;
+  let drawingAvatarRenderPending = false;
+  let drawingAvatarFinishing = false;
+  let drawingAvatarImageTransformHistoryLayerId = null;
+  const drawingAvatarView = { scale: 1, x: 0, y: 0 };
+  let drawingAvatarViewportWidth = 0;
+  let drawingAvatarViewportHeight = 0;
+  let drawingAvatarDevicePixelRatio = 1;
+  let drawingAvatarAutoFit = true;
+  let drawingAvatarCursorPoint = null;
+  const drawingAvatarExpressionPreviewEntries = [];
+  let drawingAvatarExpressionPreviewDirty = false;
+  let drawingAvatarExpressionPreviewLastAt = 0;
+  let drawingAvatarExpressionPreviewTimer = null;
+  let drawingAvatarResizeObserver = null;
+
+  function createDrawingAvatarLayerCanvas() {
+    const canvasElement = document.createElement("canvas");
+    canvasElement.width = DRAWING_AVATAR_CANVAS_WIDTH;
+    canvasElement.height = DRAWING_AVATAR_CANVAS_HEIGHT;
+    const layerCtx = canvasElement.getContext("2d", { willReadFrequently: true });
+    if (!layerCtx) throw new Error("お絵描きキャンバスを初期化できませんでした。");
+    layerCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    return { canvas: canvasElement, ctx: layerCtx };
+  }
+
+  function createDrawingAvatarLayer({ id, key, label, kind, muted = false }) {
+    const { canvas: layerCanvas, ctx: layerCtx } = createDrawingAvatarLayerCanvas();
+    return {
+      id,
+      key,
+      label,
+      kind,
+      muted: Boolean(muted),
+      canvas: layerCanvas,
+      ctx: layerCtx,
+      importedImages: [],
+      activeImportedImageId: null,
+      nextImportedImageId: 1,
+    };
+  }
+
+  function createDrawingAvatarSession() {
+    const layers = DRAWING_AVATAR_FIXED_LAYERS.map((def, index) =>
+      createDrawingAvatarLayer({
+        id: index + 1,
+        key: def.key,
+        label: def.label,
+        kind: "fixed",
+        muted: DRAWING_AVATAR_DEFAULT_MUTED_KEYS.has(def.key),
+      })
+    );
+    const faceBase = layers.find((layer) => layer.key === "faceBase");
+    return {
+      layers,
+      nextLayerId: layers.length + 1,
+      itemCount: 0,
+      activeLayerId: faceBase?.id || layers[0]?.id || null,
+      undoStack: [],
+      redoStack: [],
+      tool: "brush",
+      brushSize: 14,
+      brushSoftness: 0,
+      brushStabilization: 30,
+      pressureEnabled: true,
+      color: "#3c3026",
+      activeColorSwatchIndex: 0,
+      onionSkin: true,
+      mode: "create",
+      targetCharacterId: null,
+    };
+  }
+
+  function drawingAvatarPanelOpen() {
+    return Boolean(ui.drawingAvatarPanel && !ui.drawingAvatarPanel.hidden);
+  }
+
+  function drawingAvatarLayerById(id) {
+    return drawingAvatarSession?.layers.find((layer) => layer.id === id) || null;
+  }
+
+  function drawingAvatarFixedLayer(key) {
+    return drawingAvatarSession?.layers.find((layer) => layer.kind === "fixed" && layer.key === key) || null;
+  }
+
+  function drawingAvatarActiveLayer() {
+    return drawingAvatarLayerById(drawingAvatarSession?.activeLayerId);
+  }
+
+  function setDrawingAvatarStatus(text) {
+    if (ui.drawingAvatarStatus) ui.drawingAvatarStatus.textContent = text;
+  }
+
+  function cloneDrawingAvatarImportedImage(importedImage) {
+    return importedImage
+      ? {
+        id: Math.max(1, Math.round(Number(importedImage.id) || 1)),
+        element: importedImage.element,
+        src: importedImage.src,
+        name: importedImage.name,
+        x: Math.round(Number(importedImage.x) || 0),
+        y: Math.round(Number(importedImage.y) || 0),
+        scale: Math.round(clamp(Number(importedImage.scale) || 100, 5, 300)),
+      }
+      : null;
+  }
+
+  function cloneDrawingAvatarImportedImages(importedImages) {
+    return (Array.isArray(importedImages) ? importedImages : [])
+      .map((importedImage) => cloneDrawingAvatarImportedImage(importedImage))
+      .filter(Boolean);
+  }
+
+  function ensureDrawingAvatarImportedImages(layer) {
+    if (!layer) return [];
+    if (!Array.isArray(layer.importedImages)) {
+      layer.importedImages = [];
+    }
+    if (layer.importedImage) {
+      const legacyImage = cloneDrawingAvatarImportedImage(layer.importedImage);
+      if (legacyImage) {
+        const existingMaxId = Math.max(0, ...layer.importedImages.map((entry) => Math.round(Number(entry?.id) || 0)));
+        legacyImage.id = existingMaxId + 1;
+        layer.importedImages.push(legacyImage);
+        layer.activeImportedImageId = legacyImage.id;
+      }
+      layer.importedImage = null;
+    }
+    const used = new Set();
+    let nextId = Math.max(1, Math.round(Number(layer.nextImportedImageId) || 1));
+    for (const importedImage of layer.importedImages) {
+      let id = Math.max(1, Math.round(Number(importedImage?.id) || 0));
+      if (!id || used.has(id)) {
+        id = nextId;
+        nextId += 1;
+      }
+      importedImage.id = id;
+      used.add(id);
+      nextId = Math.max(nextId, id + 1);
+    }
+    layer.nextImportedImageId = nextId;
+    if (!layer.importedImages.some((entry) => entry.id === layer.activeImportedImageId)) {
+      layer.activeImportedImageId = layer.importedImages.length
+        ? layer.importedImages[layer.importedImages.length - 1].id
+        : null;
+    }
+    return layer.importedImages;
+  }
+
+  function drawingAvatarImportedImageCount(layer) {
+    return ensureDrawingAvatarImportedImages(layer).length;
+  }
+
+  function drawingAvatarActiveImportedImage(layer = drawingAvatarActiveLayer()) {
+    const importedImages = ensureDrawingAvatarImportedImages(layer);
+    return importedImages.find((entry) => entry.id === layer?.activeImportedImageId) || importedImages[importedImages.length - 1] || null;
+  }
+
+  function setDrawingAvatarActiveImportedImage(layer, imageId) {
+    const importedImages = ensureDrawingAvatarImportedImages(layer);
+    const nextId = Math.max(1, Math.round(Number(imageId) || 0));
+    if (!importedImages.some((entry) => entry.id === nextId)) return false;
+    layer.activeImportedImageId = nextId;
+    return true;
+  }
+
+  function drawingAvatarImportedImageMetrics(importedImage) {
+    const image = importedImage?.element;
+    const width = image?.naturalWidth || image?.width || 0;
+    const height = image?.naturalHeight || image?.height || 0;
+    if (!importedImage || !image || width <= 0 || height <= 0) return null;
+    const scale = Math.max(0.01, (Number(importedImage.scale) || 100) / 100);
+    const drawW = width * scale;
+    const drawH = height * scale;
+    const centerX = DRAWING_AVATAR_CANVAS_WIDTH / 2 + (Number(importedImage.x) || 0);
+    const centerY = DRAWING_AVATAR_CANVAS_HEIGHT / 2 + (Number(importedImage.y) || 0);
+    return {
+      image,
+      x: centerX - drawW / 2,
+      y: centerY - drawH / 2,
+      w: drawW,
+      h: drawH,
+    };
+  }
+
+  function drawDrawingAvatarImportedImage(targetCtx, importedImage) {
+    const metrics = drawingAvatarImportedImageMetrics(importedImage);
+    if (!metrics) return;
+    targetCtx.drawImage(metrics.image, metrics.x, metrics.y, metrics.w, metrics.h);
+  }
+
+  function drawDrawingAvatarLayer(targetCtx, layer) {
+    if (!layer) return;
+    for (const importedImage of ensureDrawingAvatarImportedImages(layer)) {
+      drawDrawingAvatarImportedImage(targetCtx, importedImage);
+    }
+    targetCtx.drawImage(layer.canvas, 0, 0);
+  }
+
+  function flattenDrawingAvatarLayerCanvas(layer) {
+    const { canvas: outCanvas, ctx: outCtx } = createDrawingAvatarLayerCanvas();
+    drawDrawingAvatarLayer(outCtx, layer);
+    return outCanvas;
+  }
+
+  function drawingAvatarColorSwatchButtons() {
+    return Array.from(ui.drawingAvatarColorSwatches?.querySelectorAll("[data-color]") || []);
+  }
+
+  function drawingAvatarSwatchColorsFromUi() {
+    return drawingAvatarColorSwatchButtons().map((button) => normalizeHexColor(button.dataset.color) || "#3c3026");
+  }
+
+  function applyDrawingAvatarSessionSwatchesToUi(session) {
+    const buttons = drawingAvatarColorSwatchButtons();
+    if (!buttons.length || !Array.isArray(session?.swatchColors)) return;
+    buttons.forEach((button, index) => {
+      const color = normalizeHexColor(session.swatchColors[index]);
+      if (color) button.dataset.color = color;
+    });
+  }
+
+  function syncDrawingAvatarColorSwatches() {
+    const session = drawingAvatarSession;
+    const buttons = drawingAvatarColorSwatchButtons();
+    if (!session || !buttons.length) return;
+    buttons.forEach((button, index) => {
+      const color = normalizeHexColor(button.dataset.color) || "#3c3026";
+      button.dataset.color = color;
+      button.style.setProperty("--swatch-color", color);
+      const chip = button.querySelector(".drawing-color-chip");
+      if (chip) chip.style.backgroundColor = color;
+      button.setAttribute("aria-pressed", String(index === Number(session.activeColorSwatchIndex || 0)));
+      button.setAttribute("aria-label", `色${index + 1}: ${color}`);
+    });
+  }
+
+  function setDrawingAvatarRangeOutput(input, text) {
+    const output = input?.parentElement?.querySelector("output");
+    if (output) output.textContent = text;
+  }
+
+  function syncDrawingAvatarImageControls() {
+    const layer = drawingAvatarActiveLayer();
+    const importedImages = ensureDrawingAvatarImportedImages(layer);
+    const importedImage = drawingAvatarActiveImportedImage(layer);
+    if (ui.drawingAvatarImageList) {
+      ui.drawingAvatarImageList.textContent = "";
+      ui.drawingAvatarImageList.hidden = importedImages.length === 0;
+      importedImages.forEach((entry, index) => {
+        const button = document.createElement("button");
+        button.className = "drawing-image-list-button";
+        button.type = "button";
+        button.dataset.imageId = String(entry.id);
+        button.setAttribute("aria-pressed", String(entry.id === layer.activeImportedImageId));
+        button.title = `${entry.name || "読み込みPNG"} を選択`;
+        button.textContent = `${index + 1}. ${entry.name || "読み込みPNG"}`;
+        button.addEventListener("click", () => {
+          if (!setDrawingAvatarActiveImportedImage(layer, entry.id)) return;
+          setDrawingAvatarStatus(`${layer.label} のPNG「${entry.name || "読み込みPNG"}」を選択しました。`);
+          updateDrawingAvatarUi({ rebuildList: false });
+        });
+        ui.drawingAvatarImageList.append(button);
+      });
+    }
+    if (ui.drawingAvatarImageRemoveButton) ui.drawingAvatarImageRemoveButton.disabled = !importedImage;
+    if (ui.drawingAvatarImageTransformControls) ui.drawingAvatarImageTransformControls.hidden = !importedImage;
+    if (!importedImage) return;
+    if (ui.drawingAvatarImageReadout) {
+      const index = Math.max(0, importedImages.findIndex((entry) => entry.id === importedImage.id));
+      ui.drawingAvatarImageReadout.textContent =
+        `選択中: ${index + 1}/${importedImages.length} ${importedImage.name || "読み込みPNG"}`;
+    }
+    const x = Math.round(Number(importedImage.x) || 0);
+    const y = Math.round(Number(importedImage.y) || 0);
+    const scale = Math.round(clamp(Number(importedImage.scale) || 100, 5, 300));
+    if (ui.drawingAvatarImageX) {
+      ui.drawingAvatarImageX.value = String(x);
+      setDrawingAvatarRangeOutput(ui.drawingAvatarImageX, `${x}px`);
+    }
+    if (ui.drawingAvatarImageY) {
+      ui.drawingAvatarImageY.value = String(y);
+      setDrawingAvatarRangeOutput(ui.drawingAvatarImageY, `${y}px`);
+    }
+    if (ui.drawingAvatarImageScale) {
+      ui.drawingAvatarImageScale.value = String(scale);
+      setDrawingAvatarRangeOutput(ui.drawingAvatarImageScale, `${scale}%`);
+    }
+  }
+
+  function drawingAvatarLayersInRenderOrder(session) {
+    const fixedByKey = {};
+    const items = [];
+    for (const layer of session.layers) {
+      if (layer.kind === "fixed") fixedByKey[layer.key] = layer;
+      else items.push(layer);
+    }
+    return [
+      fixedByKey.backHair,
+      fixedByKey.faceBase,
+      fixedByKey.eyesOpen,
+      fixedByKey.eyesClosed,
+      fixedByKey.mouthClosed,
+      fixedByKey.mouthHalf,
+      fixedByKey.mouthOpen,
+      ...items,
+      fixedByKey.frontHair,
+    ].filter(Boolean);
+  }
+
+  function drawingAvatarCanvasFrameElement() {
+    return ui.drawingAvatarCanvasFrame || ui.drawingAvatarCanvas?.parentElement || null;
+  }
+
+  function syncDrawingAvatarZoomLabel() {
+    if (ui.drawingAvatarZoomLabelButton) {
+      ui.drawingAvatarZoomLabelButton.textContent = `${Math.round(drawingAvatarView.scale * 100)}%`;
+    }
+  }
+
+  function fitDrawingAvatarViewport() {
+    const pad = 26;
+    const width = Math.max(1, drawingAvatarViewportWidth);
+    const height = Math.max(1, drawingAvatarViewportHeight);
+    drawingAvatarView.scale = Math.max(
+      0.02,
+      Math.min(
+        (width - pad * 2) / DRAWING_AVATAR_CANVAS_WIDTH,
+        (height - pad * 2) / DRAWING_AVATAR_CANVAS_HEIGHT
+      )
+    );
+    drawingAvatarView.x = (width - DRAWING_AVATAR_CANVAS_WIDTH * drawingAvatarView.scale) / 2;
+    drawingAvatarView.y = (height - DRAWING_AVATAR_CANVAS_HEIGHT * drawingAvatarView.scale) / 2;
+    drawingAvatarAutoFit = true;
+    syncDrawingAvatarZoomLabel();
+  }
+
+  function clampDrawingAvatarViewport() {
+    const margin = 60;
+    const width = Math.max(1, drawingAvatarViewportWidth);
+    const height = Math.max(1, drawingAvatarViewportHeight);
+    const drawW = DRAWING_AVATAR_CANVAS_WIDTH * drawingAvatarView.scale;
+    const drawH = DRAWING_AVATAR_CANVAS_HEIGHT * drawingAvatarView.scale;
+    drawingAvatarView.x = clamp(drawingAvatarView.x, margin - drawW, width - margin);
+    drawingAvatarView.y = clamp(drawingAvatarView.y, margin - drawH, height - margin);
+  }
+
+  function resizeDrawingAvatarViewport({ forceFit = false } = {}) {
+    const frame = drawingAvatarCanvasFrameElement();
+    const displayCanvas = ui.drawingAvatarCanvas;
+    if (!frame || !displayCanvas) return;
+    const rect = frame.getBoundingClientRect();
+    const previousWidth = drawingAvatarViewportWidth;
+    const previousHeight = drawingAvatarViewportHeight;
+    drawingAvatarDevicePixelRatio = window.devicePixelRatio || 1;
+    drawingAvatarViewportWidth = Math.max(1, rect.width || displayCanvas.clientWidth || DRAWING_AVATAR_CANVAS_WIDTH);
+    drawingAvatarViewportHeight = Math.max(1, rect.height || displayCanvas.clientHeight || DRAWING_AVATAR_CANVAS_HEIGHT);
+    for (const canvasElement of [displayCanvas, ui.drawingAvatarOverlay]) {
+      if (!canvasElement) continue;
+      const nextW = Math.round(drawingAvatarViewportWidth * drawingAvatarDevicePixelRatio);
+      const nextH = Math.round(drawingAvatarViewportHeight * drawingAvatarDevicePixelRatio);
+      if (canvasElement.width !== nextW) canvasElement.width = nextW;
+      if (canvasElement.height !== nextH) canvasElement.height = nextH;
+    }
+    const viewportSizeChanged =
+      Math.abs(drawingAvatarViewportWidth - previousWidth) > 1 ||
+      Math.abs(drawingAvatarViewportHeight - previousHeight) > 1;
+    if (forceFit || drawingAvatarAutoFit || viewportSizeChanged) fitDrawingAvatarViewport();
+    else clampDrawingAvatarViewport();
+    syncDrawingAvatarZoomLabel();
+    renderDrawingAvatarComposite();
+    drawDrawingAvatarOverlay();
+  }
+
+  function drawingAvatarScreenPoint(event) {
+    const frame = drawingAvatarCanvasFrameElement();
+    if (!frame) return null;
+    const rect = frame.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  function zoomDrawingAvatarAt(screenX, screenY, factor) {
+    if (!drawingAvatarPanelOpen()) return;
+    if (!drawingAvatarViewportWidth || !drawingAvatarViewportHeight) resizeDrawingAvatarViewport();
+    const nextScale = clamp(drawingAvatarView.scale * factor, 0.05, 16);
+    const ratio = nextScale / drawingAvatarView.scale;
+    if (!Number.isFinite(ratio) || ratio === 1) return;
+    drawingAvatarView.x = screenX - (screenX - drawingAvatarView.x) * ratio;
+    drawingAvatarView.y = screenY - (screenY - drawingAvatarView.y) * ratio;
+    drawingAvatarView.scale = nextScale;
+    drawingAvatarAutoFit = false;
+    clampDrawingAvatarViewport();
+    syncDrawingAvatarZoomLabel();
+    scheduleDrawingAvatarRender();
+    drawDrawingAvatarOverlay();
+  }
+
+  function setDrawingAvatarZoom(scale) {
+    const safeScale = clamp(scale, 0.05, 16);
+    zoomDrawingAvatarAt(
+      Math.max(1, drawingAvatarViewportWidth) / 2,
+      Math.max(1, drawingAvatarViewportHeight) / 2,
+      safeScale / drawingAvatarView.scale
+    );
+  }
+
+  function syncDrawingAvatarCursorMode() {
+    const session = drawingAvatarSession;
+    const frame = drawingAvatarCanvasFrameElement();
+    if (!frame || !session) return;
+    frame.dataset.mode = drawingAvatarPan ? "panning" : drawingAvatarSpaceDown ? "pan" : session.tool;
+  }
+
+  function drawDrawingAvatarOverlay() {
+    const overlay = ui.drawingAvatarOverlay;
+    const session = drawingAvatarSession;
+    if (!overlay || !session) return;
+    const nextOverlayWidth = Math.round(Math.max(1, drawingAvatarViewportWidth || overlay.clientWidth || DRAWING_AVATAR_CANVAS_WIDTH) * (drawingAvatarDevicePixelRatio || 1));
+    const nextOverlayHeight = Math.round(Math.max(1, drawingAvatarViewportHeight || overlay.clientHeight || DRAWING_AVATAR_CANVAS_HEIGHT) * (drawingAvatarDevicePixelRatio || 1));
+    if (overlay.width !== nextOverlayWidth) overlay.width = nextOverlayWidth;
+    if (overlay.height !== nextOverlayHeight) overlay.height = nextOverlayHeight;
+    const overlayCtx = overlay.getContext("2d");
+    if (!overlayCtx) return;
+    const dpr = drawingAvatarDevicePixelRatio || 1;
+    overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    overlayCtx.clearRect(0, 0, drawingAvatarViewportWidth || overlay.width, drawingAvatarViewportHeight || overlay.height);
+    if (!drawingAvatarCursorPoint || drawingAvatarPan || drawingAvatarSpaceDown) return;
+    if (session.tool !== "brush" && session.tool !== "eraser") return;
+    const radius = Math.max(1.5, (Number(session.brushSize) || 1) * drawingAvatarView.scale / 2);
+    overlayCtx.beginPath();
+    overlayCtx.arc(drawingAvatarCursorPoint.x, drawingAvatarCursorPoint.y, radius, 0, TAU);
+    overlayCtx.strokeStyle = "rgba(255,255,255,.95)";
+    overlayCtx.lineWidth = 2.6;
+    overlayCtx.stroke();
+    overlayCtx.beginPath();
+    overlayCtx.arc(drawingAvatarCursorPoint.x, drawingAvatarCursorPoint.y, radius, 0, TAU);
+    overlayCtx.strokeStyle = session.tool === "eraser" ? "rgba(207,61,61,.86)" : "rgba(40,30,20,.86)";
+    overlayCtx.lineWidth = 1.2;
+    overlayCtx.stroke();
+  }
+
+  function renderDrawingAvatarComposite() {
+    const session = drawingAvatarSession;
+    const displayCanvas = ui.drawingAvatarCanvas;
+    if (!session || !displayCanvas) return;
+    if (!drawingAvatarViewportWidth || !drawingAvatarViewportHeight) {
+      const frame = drawingAvatarCanvasFrameElement();
+      const rect = frame?.getBoundingClientRect();
+      drawingAvatarViewportWidth = Math.max(1, rect?.width || displayCanvas.clientWidth || DRAWING_AVATAR_CANVAS_WIDTH);
+      drawingAvatarViewportHeight = Math.max(1, rect?.height || displayCanvas.clientHeight || DRAWING_AVATAR_CANVAS_HEIGHT);
+      drawingAvatarDevicePixelRatio = window.devicePixelRatio || 1;
+    }
+    const nextCanvasWidth = Math.round(drawingAvatarViewportWidth * (drawingAvatarDevicePixelRatio || 1));
+    const nextCanvasHeight = Math.round(drawingAvatarViewportHeight * (drawingAvatarDevicePixelRatio || 1));
+    if (displayCanvas.width !== nextCanvasWidth) displayCanvas.width = nextCanvasWidth;
+    if (displayCanvas.height !== nextCanvasHeight) displayCanvas.height = nextCanvasHeight;
+    const displayCtx = displayCanvas.getContext("2d");
+    if (!displayCtx) return;
+    const dpr = drawingAvatarDevicePixelRatio || 1;
+    displayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    displayCtx.globalCompositeOperation = "source-over";
+    displayCtx.clearRect(0, 0, drawingAvatarViewportWidth, drawingAvatarViewportHeight);
+    displayCtx.save();
+    displayCtx.strokeStyle = "rgba(60, 48, 38, 0.28)";
+    displayCtx.lineWidth = 1;
+    displayCtx.strokeRect(
+      drawingAvatarView.x - 0.5,
+      drawingAvatarView.y - 0.5,
+      DRAWING_AVATAR_CANVAS_WIDTH * drawingAvatarView.scale + 1,
+      DRAWING_AVATAR_CANVAS_HEIGHT * drawingAvatarView.scale + 1
+    );
+    displayCtx.restore();
+    displayCtx.save();
+    displayCtx.beginPath();
+    displayCtx.rect(
+      drawingAvatarView.x,
+      drawingAvatarView.y,
+      DRAWING_AVATAR_CANVAS_WIDTH * drawingAvatarView.scale,
+      DRAWING_AVATAR_CANVAS_HEIGHT * drawingAvatarView.scale
+    );
+    displayCtx.clip();
+    displayCtx.setTransform(
+      dpr * drawingAvatarView.scale,
+      0,
+      0,
+      dpr * drawingAvatarView.scale,
+      dpr * drawingAvatarView.x,
+      dpr * drawingAvatarView.y
+    );
+    for (const layer of drawingAvatarLayersInRenderOrder(session)) {
+      if (layer.muted) continue;
+      displayCtx.globalAlpha =
+        session.onionSkin && layer.id !== session.activeLayerId ? DRAWING_AVATAR_ONION_ALPHA : 1;
+      drawDrawingAvatarLayer(displayCtx, layer);
+    }
+    displayCtx.globalAlpha = 1;
+    displayCtx.restore();
+    scheduleDrawingAvatarExpressionPreviewRender();
+  }
+
+  function scheduleDrawingAvatarRender() {
+    if (drawingAvatarRenderPending || !drawingAvatarPanelOpen()) return;
+    drawingAvatarRenderPending = true;
+    requestAnimationFrame(() => {
+      drawingAvatarRenderPending = false;
+      renderDrawingAvatarComposite();
+      drawDrawingAvatarOverlay();
+    });
+  }
+
+  function drawingAvatarCurrentEyeKey() {
+    return DRAWING_AVATAR_EYE_LAYER_KEYS.find((key) => !drawingAvatarFixedLayer(key)?.muted) || "eyesOpen";
+  }
+
+  function drawingAvatarCurrentMouthKey() {
+    return DRAWING_AVATAR_MOUTH_LAYER_KEYS.find((key) => !drawingAvatarFixedLayer(key)?.muted) || "mouthClosed";
+  }
+
+  function buildDrawingAvatarExpressionPreviews() {
+    if (!ui.drawingAvatarExpressionPreviewList || drawingAvatarExpressionPreviewEntries.length) return;
+    ui.drawingAvatarExpressionPreviewList.textContent = "";
+    for (const def of DRAWING_AVATAR_EXPRESSION_PREVIEWS) {
+      const button = document.createElement("button");
+      button.className = "drawing-expression-preview-button";
+      button.type = "button";
+      button.setAttribute("aria-pressed", "false");
+      button.title = `${def.label} をキャンバスに表示`;
+      const canvas = document.createElement("canvas");
+      canvas.width = 216;
+      canvas.height = 324;
+      const label = document.createElement("span");
+      label.textContent = def.label;
+      button.append(canvas, label);
+      button.addEventListener("click", () => selectDrawingAvatarExpressionPreview(def.eyes, def.mouth));
+      ui.drawingAvatarExpressionPreviewList.append(button);
+      drawingAvatarExpressionPreviewEntries.push({
+        ...def,
+        button,
+        canvas,
+        ctx: canvas.getContext("2d"),
+      });
+    }
+  }
+
+  function selectDrawingAvatarExpressionPreview(eyesKey, mouthKey) {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    for (const key of DRAWING_AVATAR_EYE_LAYER_KEYS) {
+      const layer = drawingAvatarFixedLayer(key);
+      if (layer) layer.muted = key !== eyesKey;
+    }
+    for (const key of DRAWING_AVATAR_MOUTH_LAYER_KEYS) {
+      const layer = drawingAvatarFixedLayer(key);
+      if (layer) layer.muted = key !== mouthKey;
+    }
+    const label = DRAWING_AVATAR_EXPRESSION_PREVIEWS.find((entry) => entry.eyes === eyesKey && entry.mouth === mouthKey)?.label;
+    if (label) setDrawingAvatarStatus(`${label} を表示中です。`);
+    updateDrawingAvatarUi();
+  }
+
+  function renderDrawingAvatarExpressionPreviews() {
+    const session = drawingAvatarSession;
+    if (!session || !drawingAvatarExpressionPreviewEntries.length) return;
+    if (drawingAvatarExpressionPreviewTimer) {
+      clearTimeout(drawingAvatarExpressionPreviewTimer);
+      drawingAvatarExpressionPreviewTimer = null;
+    }
+    drawingAvatarExpressionPreviewDirty = false;
+    drawingAvatarExpressionPreviewLastAt = performance.now();
+    const items = session.layers.filter((layer) => layer.kind === "item" && !layer.muted);
+    const backHair = drawingAvatarFixedLayer("backHair");
+    const frontHair = drawingAvatarFixedLayer("frontHair");
+    for (const entry of drawingAvatarExpressionPreviewEntries) {
+      const ctx = entry.ctx;
+      if (!ctx) continue;
+      const stack = [
+        backHair && !backHair.muted ? backHair : null,
+        drawingAvatarFixedLayer("faceBase"),
+        drawingAvatarFixedLayer(entry.eyes),
+        drawingAvatarFixedLayer(entry.mouth),
+        ...items,
+        frontHair && !frontHair.muted ? frontHair : null,
+      ].filter(Boolean);
+      ctx.setTransform(entry.canvas.width / DRAWING_AVATAR_CANVAS_WIDTH, 0, 0, entry.canvas.height / DRAWING_AVATAR_CANVAS_HEIGHT, 0, 0);
+      ctx.clearRect(0, 0, DRAWING_AVATAR_CANVAS_WIDTH, DRAWING_AVATAR_CANVAS_HEIGHT);
+      for (const layer of stack) drawDrawingAvatarLayer(ctx, layer);
+    }
+    const currentEyes = drawingAvatarCurrentEyeKey();
+    const currentMouth = drawingAvatarCurrentMouthKey();
+    for (const entry of drawingAvatarExpressionPreviewEntries) {
+      entry.button.setAttribute("aria-pressed", String(entry.eyes === currentEyes && entry.mouth === currentMouth));
+    }
+  }
+
+  function scheduleDrawingAvatarExpressionPreviewRender() {
+    if (!drawingAvatarPanelOpen()) {
+      if (drawingAvatarExpressionPreviewTimer) {
+        clearTimeout(drawingAvatarExpressionPreviewTimer);
+        drawingAvatarExpressionPreviewTimer = null;
+      }
+      return;
+    }
+    buildDrawingAvatarExpressionPreviews();
+    drawingAvatarExpressionPreviewDirty = true;
+    const now = performance.now();
+    if (now - drawingAvatarExpressionPreviewLastAt > 220) {
+      renderDrawingAvatarExpressionPreviews();
+      return;
+    }
+    if (drawingAvatarExpressionPreviewTimer) clearTimeout(drawingAvatarExpressionPreviewTimer);
+    drawingAvatarExpressionPreviewTimer = setTimeout(() => {
+      drawingAvatarExpressionPreviewTimer = null;
+      if (drawingAvatarExpressionPreviewDirty && performance.now() - drawingAvatarExpressionPreviewLastAt > 200) {
+        renderDrawingAvatarExpressionPreviews();
+      }
+    }, 240);
+  }
+
+  function renderDrawingAvatarLayerList() {
+    const session = drawingAvatarSession;
+    if (!session || !ui.drawingAvatarLayerList) return;
+    ui.drawingAvatarLayerList.textContent = "";
+    const renderedLayerIds = new Set();
+    const appendGroupLabel = (label) => {
+      const group = document.createElement("p");
+      group.className = "drawing-layer-group-label";
+      group.textContent = label;
+      ui.drawingAvatarLayerList.append(group);
+    };
+    const appendLayerRow = (layer) => {
+      if (!layer || renderedLayerIds.has(layer.id)) return;
+      renderedLayerIds.add(layer.id);
+      const row = document.createElement("div");
+      row.className = "drawing-layer-row";
+      row.dataset.id = String(layer.id);
+      row.setAttribute("aria-selected", String(layer.id === session.activeLayerId));
+      row.classList.toggle("is-muted", Boolean(layer.muted));
+
+      const nameButton = document.createElement("button");
+      nameButton.className = "drawing-layer-name";
+      nameButton.type = "button";
+      nameButton.dataset.act = "select";
+      nameButton.textContent = layer.label;
+      row.append(nameButton);
+
+      if (layer.kind === "item") {
+        const badge = document.createElement("span");
+        badge.className = "drawing-layer-badge";
+        badge.textContent = "アイテム";
+        row.append(badge);
+      }
+      const imageCount = drawingAvatarImportedImageCount(layer);
+      if (imageCount > 0) {
+        const imageBadge = document.createElement("span");
+        imageBadge.className = "drawing-layer-badge";
+        imageBadge.textContent = imageCount > 1 ? `PNG×${imageCount}` : "PNG";
+        row.append(imageBadge);
+      }
+
+      const muteButton = document.createElement("button");
+      muteButton.className = "ghost-button icon-button";
+      muteButton.type = "button";
+      muteButton.dataset.act = "mute";
+      muteButton.title = "表示/ミュート";
+      muteButton.setAttribute("aria-label", `${layer.label} の表示/ミュート`);
+      muteButton.textContent = layer.muted ? "−" : "👁";
+      row.append(muteButton);
+
+      if (layer.kind === "item") {
+        const deleteButton = document.createElement("button");
+        deleteButton.className = "ghost-button icon-button";
+        deleteButton.type = "button";
+        deleteButton.dataset.act = "delete";
+        deleteButton.title = "削除";
+        deleteButton.setAttribute("aria-label", `${layer.label} を削除`);
+        deleteButton.textContent = "×";
+        row.append(deleteButton);
+      }
+
+      ui.drawingAvatarLayerList.append(row);
+    };
+    for (const group of DRAWING_AVATAR_LAYER_GROUPS) {
+      appendGroupLabel(group.label);
+      for (const key of group.keys) appendLayerRow(drawingAvatarFixedLayer(key));
+    }
+    const itemLayers = session.layers.filter((layer) => layer.kind === "item");
+    if (itemLayers.length) {
+      appendGroupLabel("アイテム");
+      for (const layer of itemLayers) appendLayerRow(layer);
+    }
+  }
+
+  function syncDrawingAvatarToolControls() {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    const brushActive = session.tool === "brush";
+    const fillActive = session.tool === "fill";
+    const eraserActive = session.tool === "eraser";
+    ui.drawingAvatarBrushButton?.setAttribute("aria-pressed", String(brushActive));
+    ui.drawingAvatarBrushButton?.classList.toggle("muted-button", !brushActive);
+    ui.drawingAvatarFillButton?.setAttribute("aria-pressed", String(fillActive));
+    ui.drawingAvatarFillButton?.classList.toggle("muted-button", !fillActive);
+    ui.drawingAvatarEraserButton?.setAttribute("aria-pressed", String(eraserActive));
+    ui.drawingAvatarEraserButton?.classList.toggle("muted-button", !eraserActive);
+    if (ui.drawingAvatarToolReadout) {
+      ui.drawingAvatarToolReadout.textContent = fillActive ? "塗りつぶし" : eraserActive ? "消しゴム" : "ブラシ";
+    }
+    if (ui.drawingAvatarBrushSize) {
+      ui.drawingAvatarBrushSize.value = String(session.brushSize);
+      const output = ui.drawingAvatarBrushSize.parentElement?.querySelector("output");
+      if (output) output.textContent = `${session.brushSize}px`;
+    }
+    if (ui.drawingAvatarBrushSoftness) {
+      const softness = Math.round(clamp(Number(session.brushSoftness) || 0, 0, 100));
+      ui.drawingAvatarBrushSoftness.value = String(softness);
+      const output = ui.drawingAvatarBrushSoftness.parentElement?.querySelector("output");
+      if (output) output.textContent = `${softness}%`;
+    }
+    if (ui.drawingAvatarBrushStabilization) {
+      const stabilization = Math.round(clamp(Number(session.brushStabilization) || 0, 0, 100));
+      ui.drawingAvatarBrushStabilization.value = String(stabilization);
+      const output = ui.drawingAvatarBrushStabilization.parentElement?.querySelector("output");
+      if (output) output.textContent = `${stabilization}%`;
+    }
+    if (ui.drawingAvatarPressureEnabled) {
+      ui.drawingAvatarPressureEnabled.checked = session.pressureEnabled !== false;
+    }
+    if (ui.drawingAvatarColorInput) ui.drawingAvatarColorInput.value = session.color;
+    applyDrawingAvatarSessionSwatchesToUi(session);
+    syncDrawingAvatarColorSwatches();
+    if (ui.drawingAvatarCanvas) ui.drawingAvatarCanvas.dataset.tool = session.tool;
+    syncDrawingAvatarCursorMode();
+    syncDrawingAvatarZoomLabel();
+    if (ui.drawingAvatarOnionSkin) ui.drawingAvatarOnionSkin.checked = Boolean(session.onionSkin);
+    syncDrawingAvatarImageControls();
+    drawDrawingAvatarOverlay();
+  }
+
+  function updateDrawingAvatarUi({ rebuildList = true } = {}) {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    const active = drawingAvatarActiveLayer();
+    if (ui.drawingAvatarActiveLayerReadout) {
+      ui.drawingAvatarActiveLayerReadout.textContent = active ? active.label : "未選択";
+    }
+    if (ui.drawingAvatarUndoButton) ui.drawingAvatarUndoButton.disabled = !session.undoStack.length;
+    if (ui.drawingAvatarRedoButton) ui.drawingAvatarRedoButton.disabled = !session.redoStack.length;
+    if (ui.drawingAvatarAddItemButton) {
+      ui.drawingAvatarAddItemButton.disabled =
+        session.layers.filter((layer) => layer.kind === "item").length >= DRAWING_AVATAR_MAX_ITEM_LAYERS;
+    }
+    if (ui.drawingAvatarFinishButton) ui.drawingAvatarFinishButton.disabled = drawingAvatarFinishing;
+    if (ui.drawingAvatarFinishButton) {
+      ui.drawingAvatarFinishButton.textContent =
+        session.mode === "edit" ? "反映してキャラを更新" : "完成してキャラを作成";
+    }
+    syncDrawingAvatarToolControls();
+    if (rebuildList) renderDrawingAvatarLayerList();
+    scheduleDrawingAvatarRender();
+  }
+
+  function openDrawingAvatarPanel() {
+    if (OBS_MODE || !ui.drawingAvatarPanel) return;
+    const resumed = Boolean(drawingAvatarSession);
+    if (!drawingAvatarSession) drawingAvatarSession = createDrawingAvatarSession();
+    ui.drawingAvatarPanel.hidden = false;
+    setDrawingAvatarStatus(
+      drawingAvatarSession.mode === "edit"
+        ? "このお絵描きキャラを書き直し中です。反映すると現在のキャラ画像を更新します。"
+        : resumed
+        ? "描きかけの内容を再開しました。完成すると新しいキャラとして追加されます。"
+        : "描く対象を選んで、キャンバスに描いてください。目・口は差分ごとにレイヤーが分かれています。"
+    );
+    buildDrawingAvatarExpressionPreviews();
+    drawingAvatarAutoFit = true;
+    updateDrawingAvatarUi();
+    requestAnimationFrame(() => resizeDrawingAvatarViewport({ forceFit: true }));
+  }
+
+  function closeDrawingAvatarPanel() {
+    if (!ui.drawingAvatarPanel) return;
+    ui.drawingAvatarPanel.hidden = true;
+    drawingAvatarStroke = null;
+    drawingAvatarPan = null;
+    drawingAvatarSpaceDown = false;
+    drawingAvatarCursorPoint = null;
+    syncDrawingAvatarCursorMode();
+    drawDrawingAvatarOverlay();
+    if (drawingAvatarSession) {
+      setEditStatus("お絵描きを閉じました。描きかけの内容は「お絵描きで新キャラ作成」からいつでも再開できます。");
+    }
+  }
+
+  async function openDrawingAvatarPanelForActiveCharacterEdit() {
+    if (OBS_MODE || !activeCharacterId) return false;
+    if (!canSwitchCharacterNow()) {
+      setEditStatus("編集中・設定中はお絵描きキャラを書き直せません。編集を完了または中止してください。");
+      return false;
+    }
+    if (drawingAvatarSession && drawingAvatarSession.targetCharacterId !== activeCharacterId) {
+      const discard = window.confirm("開いているお絵描き内容を閉じて、現在のキャラを書き直しますか？未完成の内容は失われます。");
+      if (!discard) return false;
+      drawingAvatarSession = null;
+      drawingAvatarStroke = null;
+      drawingAvatarPan = null;
+    }
+    try {
+      updateCharacterSwitcherDisabled(true);
+      const record = await getCharacterProfile(activeCharacterId);
+      if (!record || record.source?.kind !== DRAWN_AVATAR_SOURCE_KIND) {
+        setEditStatus("現在のキャラはお絵描きキャラではないため、書き直しできません。");
+        return false;
+      }
+      const draft = record.source?.drawingAvatarDraft;
+      if (!draft) {
+        setEditStatus("このお絵描きキャラには元のレイヤーデータがないため、書き直しできません。新しく作り直してください。");
+        return false;
+      }
+      drawingAvatarSession = await createDrawingAvatarSessionFromDraft(draft);
+      drawingAvatarSession.mode = "edit";
+      drawingAvatarSession.targetCharacterId = record.id;
+      drawingAvatarStroke = null;
+      closeCharacterSwitcherMenu();
+      openDrawingAvatarPanel();
+      return true;
+    } catch (error) {
+      console.warn("お絵描きキャラの書き直し開始に失敗しました。", error);
+      setEditStatus(error instanceof Error ? error.message : "お絵描きキャラの書き直し開始に失敗しました。");
+      return false;
+    } finally {
+      updateCharacterSwitcherDisabled(false);
+      await updateCharacterSwitcherUi();
+    }
+  }
+
+  function setDrawingAvatarActiveLayer(id) {
+    const session = drawingAvatarSession;
+    const layer = drawingAvatarLayerById(id);
+    if (!session || !layer) return;
+    session.activeLayerId = layer.id;
+    ensureDrawingAvatarLayerVisible(layer);
+    updateDrawingAvatarUi();
+  }
+
+  function ensureDrawingAvatarLayerVisible(layer) {
+    if (!layer) return;
+    if (layer.key && DRAWING_AVATAR_EYE_LAYER_KEYS.includes(layer.key)) {
+      for (const key of DRAWING_AVATAR_EYE_LAYER_KEYS) {
+        const fixedLayer = drawingAvatarFixedLayer(key);
+        if (fixedLayer) fixedLayer.muted = key !== layer.key;
+      }
+      return;
+    }
+    if (layer.key && DRAWING_AVATAR_MOUTH_LAYER_KEYS.includes(layer.key)) {
+      for (const key of DRAWING_AVATAR_MOUTH_LAYER_KEYS) {
+        const fixedLayer = drawingAvatarFixedLayer(key);
+        if (fixedLayer) fixedLayer.muted = key !== layer.key;
+      }
+      return;
+    }
+    layer.muted = false;
+  }
+
+  function toggleDrawingAvatarLayerMute(id) {
+    const layer = drawingAvatarLayerById(id);
+    if (!layer) return;
+    layer.muted = !layer.muted;
+    setDrawingAvatarStatus(
+      layer.muted
+        ? `${layer.label} をミュートしました。確認用の表示切り替えなので、完成時の書き出しには含まれます。`
+        : `${layer.label} を表示しました。`
+    );
+    updateDrawingAvatarUi();
+  }
+
+  function addDrawingAvatarItemLayer() {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    const itemCount = session.layers.filter((layer) => layer.kind === "item").length;
+    if (itemCount >= DRAWING_AVATAR_MAX_ITEM_LAYERS) {
+      setDrawingAvatarStatus(`アイテムレイヤーは最大${DRAWING_AVATAR_MAX_ITEM_LAYERS}個までです。`);
+      return;
+    }
+    session.itemCount += 1;
+    const layer = createDrawingAvatarLayer({
+      id: session.nextLayerId,
+      key: null,
+      label: `アイテム${session.itemCount}`,
+      kind: "item",
+    });
+    session.nextLayerId += 1;
+    // 前髪より下・顔より上に重なる位置（描画順は frontHair の直前）へ追加する。
+    const frontHairIndex = session.layers.findIndex((entry) => entry.kind === "fixed" && entry.key === "frontHair");
+    if (frontHairIndex >= 0) session.layers.splice(frontHairIndex, 0, layer);
+    else session.layers.push(layer);
+    session.activeLayerId = layer.id;
+    setDrawingAvatarStatus(`${layer.label} を追加しました。完成後は既存のPNGアイテムと同じように調整できます。`);
+    updateDrawingAvatarUi();
+  }
+
+  function deleteDrawingAvatarItemLayer(id) {
+    const session = drawingAvatarSession;
+    const layer = drawingAvatarLayerById(id);
+    if (!session || !layer || layer.kind !== "item") return;
+    session.layers = session.layers.filter((entry) => entry.id !== id);
+    session.undoStack = session.undoStack.filter((entry) => entry.layerId !== id);
+    session.redoStack = session.redoStack.filter((entry) => entry.layerId !== id);
+    if (session.activeLayerId === id) {
+      session.activeLayerId = drawingAvatarFixedLayer("faceBase")?.id || session.layers[0]?.id || null;
+    }
+    setDrawingAvatarStatus(`${layer.label} を削除しました。削除したアイテムは書き出されません。`);
+    updateDrawingAvatarUi();
+  }
+
+  function drawingAvatarInitialImageScale(image) {
+    const width = image?.naturalWidth || image?.width || 0;
+    const height = image?.naturalHeight || image?.height || 0;
+    if (width <= 0 || height <= 0) return 100;
+    const fit = Math.min(DRAWING_AVATAR_CANVAS_WIDTH / width, DRAWING_AVATAR_CANVAS_HEIGHT / height, 1);
+    return Math.round(clamp(fit * 100, 5, 300));
+  }
+
+  async function loadDrawingAvatarImportedImageFromFile(file) {
+    if (!file) return null;
+    if (file.size > MAX_ITEM_IMAGE_FILE_SIZE) {
+      throw new Error(`PNG画像が大きすぎます。${Math.floor(MAX_ITEM_IMAGE_FILE_SIZE / 1024 / 1024)}MB以下のPNGを選んでください。`);
+    }
+    const u8 = new Uint8Array(await file.arrayBuffer());
+    assertPngU8(u8, file.name || "PNG画像");
+    const image = await loadPngImageFromU8(u8, file.name || "PNG画像");
+    validateItemImageDimensions(image, file.name || "PNG画像");
+    return {
+      element: image,
+      src: u8ToPngDataUrl(u8),
+      name: file.name || "読み込みPNG",
+      x: 0,
+      y: 0,
+      scale: drawingAvatarInitialImageScale(image),
+    };
+  }
+
+  async function importDrawingAvatarImagesToActiveLayer(files) {
+    const layer = drawingAvatarActiveLayer();
+    const fileList = Array.from(files || []).filter(Boolean);
+    if (!layer || !fileList.length) return false;
+    try {
+      const loadedImages = [];
+      for (const file of fileList) {
+        const importedImage = await loadDrawingAvatarImportedImageFromFile(file);
+        if (importedImage) loadedImages.push(importedImage);
+      }
+      if (!loadedImages.length) return false;
+      pushDrawingAvatarUndo(layer);
+      const importedImages = ensureDrawingAvatarImportedImages(layer);
+      for (const importedImage of loadedImages) {
+        importedImage.id = Math.max(1, Math.round(Number(layer.nextImportedImageId) || 1));
+        layer.nextImportedImageId = importedImage.id + 1;
+        importedImages.push(importedImage);
+        layer.activeImportedImageId = importedImage.id;
+      }
+      const label = loadedImages.length === 1
+        ? `PNG画像「${loadedImages[0].name}」`
+        : `${loadedImages.length}枚のPNG画像`;
+      setDrawingAvatarStatus(`${layer.label} に${label}を追加しました。PNG一覧から選ぶと位置と大きさを個別に調整できます。`);
+      updateDrawingAvatarUi();
+      return true;
+    } catch (error) {
+      console.warn("お絵描きレイヤーのPNG追加に失敗しました。", error);
+      setDrawingAvatarStatus(error instanceof Error ? error.message : "PNG画像の読み込みに失敗しました。");
+      return false;
+    } finally {
+      if (ui.drawingAvatarImageFileInput) ui.drawingAvatarImageFileInput.value = "";
+    }
+  }
+
+  function removeDrawingAvatarImportedImage() {
+    const layer = drawingAvatarActiveLayer();
+    const importedImages = ensureDrawingAvatarImportedImages(layer);
+    const importedImage = drawingAvatarActiveImportedImage(layer);
+    if (!layer || !importedImage) return;
+    pushDrawingAvatarUndo(layer);
+    const name = importedImage.name || "PNG画像";
+    const index = importedImages.findIndex((entry) => entry.id === importedImage.id);
+    if (index >= 0) importedImages.splice(index, 1);
+    const nextActive = importedImages[Math.min(index, importedImages.length - 1)] || importedImages[importedImages.length - 1] || null;
+    layer.activeImportedImageId = nextActive?.id || null;
+    drawingAvatarImageTransformHistoryLayerId = null;
+    setDrawingAvatarStatus(`${layer.label} から「${name}」を削除しました。「元に戻す」で戻せます。`);
+    updateDrawingAvatarUi();
+  }
+
+  function beginDrawingAvatarImageTransformHistory() {
+    const layer = drawingAvatarActiveLayer();
+    const importedImage = drawingAvatarActiveImportedImage(layer);
+    const historyKey = layer && importedImage ? `${layer.id}:${importedImage.id}` : null;
+    if (!layer || !importedImage || drawingAvatarImageTransformHistoryLayerId === historyKey) return;
+    pushDrawingAvatarUndo(layer);
+    drawingAvatarImageTransformHistoryLayerId = historyKey;
+  }
+
+  function endDrawingAvatarImageTransformHistory() {
+    drawingAvatarImageTransformHistoryLayerId = null;
+  }
+
+  function setDrawingAvatarImportedImageTransform(prop, value, { withUndo = false } = {}) {
+    const layer = drawingAvatarActiveLayer();
+    const importedImage = drawingAvatarActiveImportedImage(layer);
+    if (!layer || !importedImage) return;
+    if (withUndo) pushDrawingAvatarUndo(layer);
+    if (prop === "x") importedImage.x = Math.round(clamp(Number(value) || 0, -DRAWING_AVATAR_CANVAS_WIDTH, DRAWING_AVATAR_CANVAS_WIDTH));
+    if (prop === "y") importedImage.y = Math.round(clamp(Number(value) || 0, -DRAWING_AVATAR_CANVAS_HEIGHT, DRAWING_AVATAR_CANVAS_HEIGHT));
+    if (prop === "scale") importedImage.scale = Math.round(clamp(Number(value) || 100, 5, 300));
+    updateDrawingAvatarUi({ rebuildList: false });
+  }
+
+  function centerDrawingAvatarImportedImage() {
+    const layer = drawingAvatarActiveLayer();
+    const importedImage = drawingAvatarActiveImportedImage(layer);
+    if (!layer || !importedImage) return;
+    pushDrawingAvatarUndo(layer);
+    importedImage.x = 0;
+    importedImage.y = 0;
+    setDrawingAvatarStatus(`${layer.label} のPNG「${importedImage.name || "読み込みPNG"}」を中央へ戻しました。`);
+    updateDrawingAvatarUi({ rebuildList: false });
+  }
+
+  function drawingAvatarSnapshotLayer(layer) {
+    return {
+      imageData: layer.ctx.getImageData(0, 0, layer.canvas.width, layer.canvas.height),
+      importedImages: cloneDrawingAvatarImportedImages(ensureDrawingAvatarImportedImages(layer)),
+      activeImportedImageId: layer.activeImportedImageId,
+      nextImportedImageId: layer.nextImportedImageId,
+    };
+  }
+
+  function pushDrawingAvatarUndo(layer) {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    session.undoStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+    if (session.undoStack.length > DRAWING_AVATAR_MAX_HISTORY) session.undoStack.shift();
+    session.redoStack.length = 0;
+  }
+
+  function applyDrawingAvatarHistory(fromStack, toStack) {
+    const session = drawingAvatarSession;
+    if (!session) return false;
+    while (fromStack.length) {
+      const entry = fromStack.pop();
+      const layer = drawingAvatarLayerById(entry.layerId);
+      if (!layer) continue;
+      toStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+      if (entry.image?.imageData) {
+        layer.ctx.putImageData(entry.image.imageData, 0, 0);
+        layer.importedImages = cloneDrawingAvatarImportedImages(
+          entry.image.importedImages || (entry.image.importedImage ? [entry.image.importedImage] : [])
+        );
+        layer.activeImportedImageId = entry.image.activeImportedImageId || layer.importedImages[layer.importedImages.length - 1]?.id || null;
+        layer.nextImportedImageId = Math.max(
+          Math.round(Number(entry.image.nextImportedImageId) || 1),
+          1,
+          ...layer.importedImages.map((image) => Math.round(Number(image.id) || 0) + 1)
+        );
+        layer.importedImage = null;
+      } else {
+        layer.ctx.putImageData(entry.image, 0, 0);
+      }
+      session.activeLayerId = layer.id;
+      updateDrawingAvatarUi();
+      return true;
+    }
+    return false;
+  }
+
+  function undoDrawingAvatarStroke() {
+    const session = drawingAvatarSession;
+    if (!session || !applyDrawingAvatarHistory(session.undoStack, session.redoStack)) return;
+    setDrawingAvatarStatus("1手戻しました。");
+  }
+
+  function redoDrawingAvatarStroke() {
+    const session = drawingAvatarSession;
+    if (!session || !applyDrawingAvatarHistory(session.redoStack, session.undoStack)) return;
+    setDrawingAvatarStatus("やり直しました。");
+  }
+
+  function clearDrawingAvatarActiveLayer() {
+    const layer = drawingAvatarActiveLayer();
+    if (!layer) return;
+    pushDrawingAvatarUndo(layer);
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.importedImages = [];
+    layer.activeImportedImageId = null;
+    layer.importedImage = null;
+    drawingAvatarImageTransformHistoryLayerId = null;
+    setDrawingAvatarStatus(`${layer.label} をクリアしました。「元に戻す」で戻せます。`);
+    updateDrawingAvatarUi();
+  }
+
+  function drawingAvatarPointerToCanvas(event) {
+    const screenPoint = drawingAvatarScreenPoint(event);
+    if (!screenPoint) return null;
+    return {
+      x: (screenPoint.x - drawingAvatarView.x) / drawingAvatarView.scale,
+      y: (screenPoint.y - drawingAvatarView.y) / drawingAvatarView.scale,
+    };
+  }
+
+  function drawingAvatarReplacementRgba() {
+    const rgb = hexToRgb(drawingAvatarSession?.color || "#3C3026");
+    return [rgb.r, rgb.g, rgb.b, 255];
+  }
+
+  function drawingAvatarPixelMatches(data, offset, target, tolerance = DRAWING_AVATAR_FILL_TOLERANCE) {
+    const alpha = data[offset + 3];
+    if (target[3] <= tolerance) return alpha <= tolerance;
+    return (
+      Math.abs(data[offset] - target[0]) <= tolerance &&
+      Math.abs(data[offset + 1] - target[1]) <= tolerance &&
+      Math.abs(data[offset + 2] - target[2]) <= tolerance &&
+      Math.abs(alpha - target[3]) <= tolerance
+    );
+  }
+
+  function drawingAvatarFloodFill(layer, point) {
+    if (!layer || !point) return false;
+    const width = layer.canvas.width;
+    const height = layer.canvas.height;
+    const startX = Math.max(0, Math.min(width - 1, Math.floor(point.x)));
+    const startY = Math.max(0, Math.min(height - 1, Math.floor(point.y)));
+    const imageData = layer.ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const startPixel = startY * width + startX;
+    const startOffset = startPixel * 4;
+    const target = [
+      data[startOffset],
+      data[startOffset + 1],
+      data[startOffset + 2],
+      data[startOffset + 3],
+    ];
+    const replacement = drawingAvatarReplacementRgba();
+    if (
+      Math.abs(target[0] - replacement[0]) <= DRAWING_AVATAR_FILL_TOLERANCE &&
+      Math.abs(target[1] - replacement[1]) <= DRAWING_AVATAR_FILL_TOLERANCE &&
+      Math.abs(target[2] - replacement[2]) <= DRAWING_AVATAR_FILL_TOLERANCE &&
+      Math.abs(target[3] - replacement[3]) <= DRAWING_AVATAR_FILL_TOLERANCE
+    ) {
+      return false;
+    }
+
+    const queue = new Int32Array(width * height);
+    let head = 0;
+    let tail = 0;
+    let changed = 0;
+
+    const fillPixel = (pixelIndex) => {
+      const offset = pixelIndex * 4;
+      if (!drawingAvatarPixelMatches(data, offset, target)) return false;
+      data[offset] = replacement[0];
+      data[offset + 1] = replacement[1];
+      data[offset + 2] = replacement[2];
+      data[offset + 3] = replacement[3];
+      changed += 1;
+      queue[tail] = pixelIndex;
+      tail += 1;
+      return true;
+    };
+
+    if (!fillPixel(startPixel)) return false;
+    while (head < tail) {
+      const pixelIndex = queue[head];
+      head += 1;
+      const x = pixelIndex % width;
+      if (x > 0) fillPixel(pixelIndex - 1);
+      if (x < width - 1) fillPixel(pixelIndex + 1);
+      if (pixelIndex >= width) fillPixel(pixelIndex - width);
+      if (pixelIndex < width * (height - 1)) fillPixel(pixelIndex + width);
+    }
+    layer.ctx.putImageData(imageData, 0, 0);
+    return changed > 0;
+  }
+
+  function applyDrawingAvatarBrushStyle(layerCtx, width = drawingAvatarSession?.brushSize) {
+    const session = drawingAvatarSession;
+    layerCtx.lineCap = "round";
+    layerCtx.lineJoin = "round";
+    layerCtx.lineWidth = Math.max(1, Number(width) || 1);
+    if (session.tool === "eraser") {
+      layerCtx.globalCompositeOperation = "destination-out";
+      layerCtx.strokeStyle = "rgba(0, 0, 0, 1)";
+      layerCtx.fillStyle = "rgba(0, 0, 0, 1)";
+    } else {
+      layerCtx.globalCompositeOperation = "source-over";
+      layerCtx.strokeStyle = session.color;
+      layerCtx.fillStyle = session.color;
+    }
+  }
+
+  function drawingAvatarBrushSoftnessRatio() {
+    return clamp(Number(drawingAvatarSession?.brushSoftness) || 0, 0, 100) / 100;
+  }
+
+  function drawingAvatarSoftBrushColor(alpha) {
+    if (drawingAvatarSession?.tool === "eraser") {
+      return `rgba(0, 0, 0, ${alpha})`;
+    }
+    const rgb = hexToRgb(drawingAvatarSession?.color || "#3c3026");
+    return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+  }
+
+  function drawingAvatarSoftStamp(layer, point, width = drawingAvatarSession?.brushSize) {
+    const ctx = layer.ctx;
+    const radius = Math.max(0.5, (Number(width) || 1) / 2);
+    const softness = drawingAvatarBrushSoftnessRatio();
+    const innerRadius = radius * clamp(1 - softness * 0.92, 0.06, 1);
+    ctx.save();
+    ctx.globalCompositeOperation = drawingAvatarSession?.tool === "eraser" ? "destination-out" : "source-over";
+    const gradient = ctx.createRadialGradient(point.x, point.y, innerRadius, point.x, point.y, radius);
+    gradient.addColorStop(0, drawingAvatarSoftBrushColor(1));
+    gradient.addColorStop(1, drawingAvatarSoftBrushColor(0));
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawingAvatarStrokeDot(layer, point, width = drawingAvatarSession?.brushSize) {
+    if (drawingAvatarBrushSoftnessRatio() > 0.01) {
+      drawingAvatarSoftStamp(layer, point, width);
+      return;
+    }
+    applyDrawingAvatarBrushStyle(layer.ctx, width);
+    layer.ctx.beginPath();
+    layer.ctx.arc(point.x, point.y, Math.max(0.5, (Number(width) || 1) / 2), 0, TAU);
+    layer.ctx.fill();
+  }
+
+  function drawingAvatarStrokeSegment(layer, from, to, fromWidth = drawingAvatarSession?.brushSize, toWidth = fromWidth) {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < 0.01) {
+      drawingAvatarStrokeDot(layer, to, toWidth);
+      return;
+    }
+    const softness = drawingAvatarBrushSoftnessRatio();
+    const minRadius = Math.max(0.35, Math.min(Number(fromWidth) || 1, Number(toWidth) || 1) / 2);
+    const spacing = Math.max(softness > 0.01 ? 0.75 : 0.55, minRadius * (softness > 0.01 ? 0.42 - softness * 0.24 : 0.45));
+    const steps = Math.min(900, Math.max(1, Math.ceil(distance / spacing)));
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / steps;
+      drawingAvatarStrokeDot(
+        layer,
+        { x: from.x + dx * t, y: from.y + dy * t },
+        fromWidth + (toWidth - fromWidth) * t
+      );
+    }
+  }
+
+  function drawingAvatarStrokeWidth(event) {
+    const session = drawingAvatarSession;
+    const base = Math.max(1, Number(session?.brushSize) || 1);
+    if (!(session?.pressureEnabled !== false && event.pointerType === "pen")) return base;
+    const pressure = clamp(event.pressure ?? 0.5, 0.02, 1);
+    return Math.max(1, base * (0.12 + 0.88 * Math.pow(pressure, 1.35)));
+  }
+
+  function beginDrawingAvatarStroke(event) {
+    const session = drawingAvatarSession;
+    const layer = drawingAvatarActiveLayer();
+    if (!session || !layer || drawingAvatarFinishing) return;
+    if (event.button === 1 || drawingAvatarSpaceDown) {
+      drawingAvatarPan = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: drawingAvatarView.x,
+        originY: drawingAvatarView.y,
+      };
+      try {
+        ui.drawingAvatarCanvas?.setPointerCapture?.(event.pointerId);
+      } catch {
+        // pointer capture が使えない環境でもパン自体は続行できる。
+      }
+      syncDrawingAvatarCursorMode();
+      drawDrawingAvatarOverlay();
+      event.preventDefault();
+      return;
+    }
+    if (event.button != null && event.button !== 0) return;
+    const point = drawingAvatarPointerToCanvas(event);
+    if (!point) return;
+    event.preventDefault();
+    if (point.x < -session.brushSize || point.x > DRAWING_AVATAR_CANVAS_WIDTH + session.brushSize || point.y < -session.brushSize || point.y > DRAWING_AVATAR_CANVAS_HEIGHT + session.brushSize) return;
+    if (layer.muted) setDrawingAvatarStatus(`${layer.label} のミュートを解除して描画します。`);
+    ensureDrawingAvatarLayerVisible(layer);
+    if (session.tool === "fill") {
+      if (point.x < 0 || point.x >= DRAWING_AVATAR_CANVAS_WIDTH || point.y < 0 || point.y >= DRAWING_AVATAR_CANVAS_HEIGHT) return;
+      pushDrawingAvatarUndo(layer);
+      const changed = drawingAvatarFloodFill(layer, point);
+      if (!changed) {
+        session.undoStack.pop();
+        setDrawingAvatarStatus("同じ色のため塗りつぶしませんでした。別の色を選ぶか、別の場所をクリックしてください。");
+      } else {
+        setDrawingAvatarStatus(`${layer.label} を ${session.color} で塗りつぶしました。`);
+      }
+      updateDrawingAvatarUi({ rebuildList: false });
+      return;
+    }
+    pushDrawingAvatarUndo(layer);
+    const width = drawingAvatarStrokeWidth(event);
+    drawingAvatarStroke = { layerId: layer.id, pointerId: event.pointerId, last: point, raw: point, width };
+    try {
+      ui.drawingAvatarCanvas?.setPointerCapture?.(event.pointerId);
+    } catch {
+      // pointer capture が使えない環境でも描画自体は続行できる。
+    }
+    drawingAvatarStrokeDot(layer, point, width);
+    updateDrawingAvatarUi({ rebuildList: layer.muted === false });
+  }
+
+  function continueDrawingAvatarStroke(event) {
+    drawingAvatarCursorPoint = drawingAvatarScreenPoint(event);
+    if (drawingAvatarPan && event.pointerId === drawingAvatarPan.pointerId) {
+      drawingAvatarView.x = drawingAvatarPan.originX + (event.clientX - drawingAvatarPan.startX);
+      drawingAvatarView.y = drawingAvatarPan.originY + (event.clientY - drawingAvatarPan.startY);
+      drawingAvatarAutoFit = false;
+      clampDrawingAvatarViewport();
+      syncDrawingAvatarCursorMode();
+      scheduleDrawingAvatarRender();
+      drawDrawingAvatarOverlay();
+      event.preventDefault();
+      return;
+    }
+    drawDrawingAvatarOverlay();
+    const stroke = drawingAvatarStroke;
+    if (!stroke || event.pointerId !== stroke.pointerId) return;
+    const layer = drawingAvatarLayerById(stroke.layerId);
+    if (!layer) return;
+    event.preventDefault();
+    const stabilization = Math.round(clamp(Number(drawingAvatarSession?.brushStabilization) || 0, 0, 100));
+    const alpha = 1 - 0.9 * stabilization / 100;
+    const events = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [event];
+    for (const sample of events.length ? events : [event]) {
+      const raw = drawingAvatarPointerToCanvas(sample);
+      if (!raw) continue;
+      const smoothed = {
+        x: stroke.last.x + (raw.x - stroke.last.x) * alpha,
+        y: stroke.last.y + (raw.y - stroke.last.y) * alpha,
+      };
+      const width = stroke.width + (drawingAvatarStrokeWidth(sample) - stroke.width) * 0.35;
+      drawingAvatarStrokeSegment(layer, stroke.last, smoothed, stroke.width, width);
+      stroke.last = smoothed;
+      stroke.raw = raw;
+      stroke.width = width;
+    }
+    scheduleDrawingAvatarRender();
+  }
+
+  function endDrawingAvatarStroke(event) {
+    if (drawingAvatarPan && (!event || event.pointerId === drawingAvatarPan.pointerId)) {
+      drawingAvatarPan = null;
+      syncDrawingAvatarCursorMode();
+      drawDrawingAvatarOverlay();
+      return;
+    }
+    const stroke = drawingAvatarStroke;
+    if (!stroke || (event && event.pointerId !== stroke.pointerId)) return;
+    const layer = drawingAvatarLayerById(stroke.layerId);
+    if (layer && (Number(drawingAvatarSession?.brushStabilization) || 0) > 0 && stroke.raw) {
+      drawingAvatarStrokeSegment(layer, stroke.last, stroke.raw, stroke.width, stroke.width);
+    }
+    drawingAvatarStroke = null;
+    updateDrawingAvatarUi({ rebuildList: false });
+  }
+
+  function drawingAvatarLayerInkBounds(layer) {
+    const flattened = flattenDrawingAvatarLayerCanvas(layer);
+    const { width, height } = flattened;
+    const flattenedCtx = flattened.getContext("2d", { willReadFrequently: true });
+    if (!flattenedCtx) return null;
+    const data = flattenedCtx.getImageData(0, 0, width, height).data;
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < height; y += 1) {
+      const row = y * width * 4;
+      for (let x = 0; x < width; x += 1) {
+        if (data[row + x * 4 + 3] <= 0) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    return { minX, minY, maxX, maxY };
+  }
+
+  function drawingAvatarLayerHasInk(layer) {
+    return Boolean(drawingAvatarLayerInkBounds(layer));
+  }
+
+  function drawingAvatarLayerLabelForKey(key) {
+    return DRAWING_AVATAR_FIXED_LAYERS.find((layer) => layer.key === key)?.label || String(key || "");
+  }
+
+  function drawingAvatarLayerSignature(layer) {
+    if (!layer) return "";
+    const flattened = flattenDrawingAvatarLayerCanvas(layer);
+    const flattenedCtx = flattened.getContext("2d", { willReadFrequently: true });
+    if (!flattenedCtx) return "";
+    const imageData = flattenedCtx.getImageData(0, 0, flattened.width, flattened.height);
+    return `${imageData.data.length}:${crc32(imageData.data).toString(16)}`;
+  }
+
+  function validateDrawingAvatarExpressionLayers(session, inkByKey) {
+    const missing = DRAWING_AVATAR_REQUIRED_EXPRESSION_LAYER_KEYS.filter((key) => !inkByKey[key])
+      .map((key) => drawingAvatarLayerLabelForKey(key));
+    if (missing.length) {
+      throw new Error(
+        `キャラ作成に必要な描く対象が未完成です: ${missing.join("、")}。` +
+        "まず顔ベースに顔や全身のベース絵を描くか、PNG画像を読み込んでください。"
+      );
+    }
+
+    const signatures = {};
+    for (const key of ["mouthClosed", "mouthHalf", "mouthOpen"]) {
+      const layer = session.layers.find((entry) => entry.kind === "fixed" && entry.key === key);
+      signatures[key] = drawingAvatarLayerSignature(layer);
+    }
+    for (const [leftKey, rightKey] of DRAWING_AVATAR_DISTINCT_MOUTH_LAYER_PAIRS) {
+      if (!inkByKey[leftKey] || !inkByKey[rightKey]) continue;
+      if (signatures[leftKey] && signatures[leftKey] === signatures[rightKey]) {
+        throw new Error(
+          `${drawingAvatarLayerLabelForKey(leftKey)} と ${drawingAvatarLayerLabelForKey(rightKey)} が同じ絵です。` +
+          "完成前に描く対象を切り替えて、口の開き具合を変えてください。"
+        );
+      }
+    }
+  }
+
+  function drawingAvatarPickLayerKey(inkByKey, preferredKeys) {
+    for (const key of preferredKeys) {
+      if (inkByKey[key]) return key;
+    }
+    return preferredKeys[0];
+  }
+
+  function drawingAvatarComposeFaceCanvas(session, eyesKey, mouthKey) {
+    const { canvas: outCanvas, ctx: outCtx } = createDrawingAvatarLayerCanvas();
+    for (const key of ["faceBase", eyesKey, mouthKey]) {
+      const layer = session.layers.find((entry) => entry.kind === "fixed" && entry.key === key);
+      if (layer) drawDrawingAvatarLayer(outCtx, layer);
+    }
+    return outCanvas;
+  }
+
+  async function drawingAvatarCanvasToImage(canvasElement, name) {
+    const blob = await new Promise((resolve) => canvasElement.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error(`${name} のPNG変換に失敗しました。`);
+    return loadPngImageFromU8(await blobToU8(blob), name);
+  }
+
+  async function buildDrawnAvatarImages(session) {
+    const inkByKey = {};
+    for (const layer of session.layers) {
+      if (layer.kind === "fixed") inkByKey[layer.key] = drawingAvatarLayerHasInk(layer);
+    }
+    if (!Object.values(inkByKey).some(Boolean)) {
+      throw new Error("まだ何も描かれていません。顔ベースなどのレイヤーに描いてから完成してください。");
+    }
+    validateDrawingAvatarExpressionLayers(session, inkByKey);
+    const loadedImages = {};
+    for (const combo of DRAWING_AVATAR_FACE_COMBOS) {
+      const eyesKey = drawingAvatarPickLayerKey(inkByKey, combo.eyes);
+      const mouthKey = drawingAvatarPickLayerKey(inkByKey, combo.mouth);
+      loadedImages[combo.key] = await drawingAvatarCanvasToImage(
+        drawingAvatarComposeFaceCanvas(session, eyesKey, mouthKey),
+        combo.key
+      );
+    }
+    for (const [imageKey, layerKey] of [["frontHair", "frontHair"], ["backHair", "backHair"]]) {
+      const layer = session.layers.find((entry) => entry.kind === "fixed" && entry.key === layerKey);
+      loadedImages[imageKey] = await drawingAvatarCanvasToImage(
+        flattenDrawingAvatarLayerCanvas(layer),
+        layer.label
+      );
+    }
+    return loadedImages;
+  }
+
+  async function buildDrawnAvatarItemLayerDrafts(session) {
+    const drafts = [];
+    let id = 1;
+    for (const layer of session.layers) {
+      if (layer.kind !== "item") continue;
+      const bounds = drawingAvatarLayerInkBounds(layer);
+      if (!bounds) continue;
+      const flattenedLayerCanvas = flattenDrawingAvatarLayerCanvas(layer);
+      const cropW = bounds.maxX - bounds.minX + 1;
+      const cropH = bounds.maxY - bounds.minY + 1;
+      const trimmedCanvas = document.createElement("canvas");
+      trimmedCanvas.width = cropW;
+      trimmedCanvas.height = cropH;
+      const trimmedCtx = trimmedCanvas.getContext("2d");
+      if (!trimmedCtx) continue;
+      trimmedCtx.clearRect(0, 0, cropW, cropH);
+      trimmedCtx.drawImage(flattenedLayerCanvas, bounds.minX, bounds.minY, cropW, cropH, 0, 0, cropW, cropH);
+      const src = await canvasToPngDataUrl(trimmedCanvas, layer.label);
+      drafts.push({
+        ...ITEM_LAYER_DEFAULTS,
+        id,
+        label: `#${id} ${layer.label}`,
+        name: `${layer.label}.png`,
+        src,
+        // 描いた位置のまま表示されるよう、トリミング分の中心オフセットをアイテム位置へ引き継ぐ。
+        x: Math.round(bounds.minX + cropW / 2 - DRAWING_AVATAR_CANVAS_WIDTH / 2),
+        y: Math.round(bounds.minY + cropH / 2 - DRAWING_AVATAR_CANVAS_HEIGHT / 2),
+      });
+      id += 1;
+    }
+    return drafts;
+  }
+
+  async function serializeDrawingAvatarSession(session) {
+    if (!session) return null;
+    return {
+      version: 2,
+      canvasWidth: DRAWING_AVATAR_CANVAS_WIDTH,
+      canvasHeight: DRAWING_AVATAR_CANVAS_HEIGHT,
+      nextLayerId: session.nextLayerId,
+      itemCount: session.itemCount,
+      activeLayerId: session.activeLayerId,
+      tool: session.tool,
+      brushSize: session.brushSize,
+      brushSoftness: Math.round(clamp(Number(session.brushSoftness) || 0, 0, 100)),
+      brushStabilization: Math.round(clamp(Number(session.brushStabilization) || 0, 0, 100)),
+      pressureEnabled: session.pressureEnabled !== false,
+      color: session.color,
+      activeColorSwatchIndex: Number(session.activeColorSwatchIndex || 0),
+      swatchColors: drawingAvatarSwatchColorsFromUi(),
+      onionSkin: Boolean(session.onionSkin),
+      layers: await Promise.all(session.layers.map(async (layer) => ({
+        id: layer.id,
+        key: layer.key,
+        label: layer.label,
+        kind: layer.kind,
+        muted: Boolean(layer.muted),
+        canvasSrc: await canvasToPngDataUrl(layer.canvas, layer.label),
+        activeImportedImageId: layer.activeImportedImageId || null,
+        nextImportedImageId: Math.max(1, Math.round(Number(layer.nextImportedImageId) || 1)),
+        importedImages: ensureDrawingAvatarImportedImages(layer).map((importedImage) => ({
+          id: Math.max(1, Math.round(Number(importedImage.id) || 1)),
+          src: importedImage.src,
+          name: importedImage.name,
+          x: Math.round(Number(importedImage.x) || 0),
+          y: Math.round(Number(importedImage.y) || 0),
+          scale: Math.round(clamp(Number(importedImage.scale) || 100, 5, 300)),
+        })),
+      }))),
+    };
+  }
+
+  async function restoreDrawingAvatarLayerCanvas(layer, canvasSrc) {
+    if (!canvasSrc) return;
+    const image = await loadImageFromDataUrl(canvasSrc, layer.label || "お絵描きレイヤー");
+    layer.ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+    layer.ctx.drawImage(image, 0, 0, layer.canvas.width, layer.canvas.height);
+  }
+
+  async function restoreDrawingAvatarImportedImage(data) {
+    if (!data?.src) return null;
+    const image = await loadImageFromDataUrl(data.src, data.name || "読み込みPNG");
+    validateItemImageDimensions(image, data.name || "読み込みPNG");
+    return {
+      id: Math.max(1, Math.round(Number(data.id) || 1)),
+      element: image,
+      src: data.src,
+      name: String(data.name || "読み込みPNG"),
+      x: Math.round(clamp(Number(data.x) || 0, -DRAWING_AVATAR_CANVAS_WIDTH, DRAWING_AVATAR_CANVAS_WIDTH)),
+      y: Math.round(clamp(Number(data.y) || 0, -DRAWING_AVATAR_CANVAS_HEIGHT, DRAWING_AVATAR_CANVAS_HEIGHT)),
+      scale: Math.round(clamp(Number(data.scale) || 100, 5, 300)),
+    };
+  }
+
+  async function restoreDrawingAvatarImportedImages(layer, savedLayer) {
+    if (!layer || !savedLayer) return;
+    const rawImportedImages = Array.isArray(savedLayer.importedImages)
+      ? savedLayer.importedImages
+      : (savedLayer.importedImage ? [savedLayer.importedImage] : []);
+    const restoredImages = [];
+    const usedIds = new Set();
+    let nextImportedImageId = 1;
+    for (const rawImage of rawImportedImages) {
+      const importedImage = await restoreDrawingAvatarImportedImage(rawImage);
+      if (!importedImage) continue;
+      if (usedIds.has(importedImage.id)) importedImage.id = nextImportedImageId;
+      usedIds.add(importedImage.id);
+      nextImportedImageId = Math.max(nextImportedImageId, importedImage.id + 1);
+      restoredImages.push(importedImage);
+    }
+    layer.importedImages = restoredImages;
+    layer.importedImage = null;
+    layer.nextImportedImageId = Math.max(
+      nextImportedImageId,
+      Math.round(Number(savedLayer.nextImportedImageId) || 0)
+    );
+    const savedActiveId = Math.max(1, Math.round(Number(savedLayer.activeImportedImageId) || 0));
+    layer.activeImportedImageId = restoredImages.some((entry) => entry.id === savedActiveId)
+      ? savedActiveId
+      : (restoredImages[restoredImages.length - 1]?.id || null);
+  }
+
+  async function createDrawingAvatarSessionFromDraft(draft) {
+    const fallback = createDrawingAvatarSession();
+    if (!draft || typeof draft !== "object" || !Array.isArray(draft.layers)) return fallback;
+    const restoredLayers = [];
+    for (const savedLayer of draft.layers) {
+      if (!savedLayer || typeof savedLayer !== "object") continue;
+      const isFixed = savedLayer.kind === "fixed";
+      const fixedDef = isFixed ? DRAWING_AVATAR_FIXED_LAYERS.find((def) => def.key === savedLayer.key) : null;
+      const layer = createDrawingAvatarLayer({
+        id: Math.max(1, Math.round(Number(savedLayer.id) || restoredLayers.length + 1)),
+        key: isFixed ? fixedDef?.key || savedLayer.key : null,
+        label: String(isFixed ? fixedDef?.label || savedLayer.label : savedLayer.label || `アイテム${restoredLayers.length + 1}`),
+        kind: isFixed ? "fixed" : "item",
+        muted: Boolean(savedLayer.muted),
+      });
+      await restoreDrawingAvatarLayerCanvas(layer, savedLayer.canvasSrc);
+      await restoreDrawingAvatarImportedImages(layer, savedLayer);
+      restoredLayers.push(layer);
+    }
+
+    const byFixedKey = new Map(restoredLayers.filter((layer) => layer.kind === "fixed").map((layer) => [layer.key, layer]));
+    const orderedLayers = [];
+    for (const def of DRAWING_AVATAR_FIXED_LAYERS) {
+      let layer = byFixedKey.get(def.key);
+      if (!layer) {
+        layer = createDrawingAvatarLayer({
+          id: Math.max(1, ...restoredLayers.map((entry) => entry.id), ...orderedLayers.map((entry) => entry.id)) + 1,
+          key: def.key,
+          label: def.label,
+          kind: "fixed",
+          muted: DRAWING_AVATAR_DEFAULT_MUTED_KEYS.has(def.key),
+        });
+      } else {
+        layer.label = def.label;
+      }
+      if (def.key === "frontHair") {
+        orderedLayers.push(...restoredLayers.filter((entry) => entry.kind === "item"));
+      }
+      orderedLayers.push(layer);
+    }
+
+    const usedIds = new Set();
+    let nextId = 1;
+    for (const layer of orderedLayers) {
+      if (usedIds.has(layer.id)) layer.id = nextId;
+      usedIds.add(layer.id);
+      nextId = Math.max(nextId, layer.id + 1);
+    }
+    const activeLayerId = orderedLayers.some((layer) => layer.id === Number(draft.activeLayerId))
+      ? Number(draft.activeLayerId)
+      : (orderedLayers.find((layer) => layer.key === "faceBase")?.id || orderedLayers[0]?.id || null);
+    return {
+      layers: orderedLayers,
+      nextLayerId: Math.max(nextId, Math.round(Number(draft.nextLayerId) || 0)),
+      itemCount: Math.max(
+        Math.round(Number(draft.itemCount) || 0),
+        orderedLayers.filter((layer) => layer.kind === "item").length
+      ),
+      activeLayerId,
+      undoStack: [],
+      redoStack: [],
+      tool: ["brush", "fill", "eraser"].includes(draft.tool) ? draft.tool : "brush",
+      brushSize: Math.round(clamp(Number(draft.brushSize) || 14, 1, 400)),
+      brushSoftness: Math.round(clamp(Number(draft.brushSoftness) || 0, 0, 100)),
+      brushStabilization: Math.round(clamp(Number(draft.brushStabilization ?? draft.stab ?? 30), 0, 100)),
+      pressureEnabled: draft.pressureEnabled !== false && draft.pressure !== false,
+      color: normalizeHexColor(draft.color) || "#3c3026",
+      activeColorSwatchIndex: Math.round(clamp(Number(draft.activeColorSwatchIndex) || 0, 0, 99)),
+      swatchColors: Array.isArray(draft.swatchColors)
+        ? draft.swatchColors.map((color) => normalizeHexColor(color) || "#3c3026")
+        : null,
+      onionSkin: draft.onionSkin !== false,
+      mode: "create",
+      targetCharacterId: null,
+    };
+  }
+
+  function buildDrawnAvatarSettingsPayloadForUpdate(itemLayerDrafts) {
+    const settingsPayload = buildAllSettingsPayload({ includeItemImages: false, includeBaseline: true });
+    settingsPayload.avatarImageSize = { width: DRAWING_AVATAR_CANVAS_WIDTH, height: DRAWING_AVATAR_CANVAS_HEIGHT };
+    settingsPayload.state = { ...(settingsPayload.state || {}), frontHairShadowEnabled: false };
+    settingsPayload.itemLayers = (itemLayerDrafts || []).map((draft) => ({ ...draft, src: null }));
+    settingsPayload.activeItemLayerId = itemLayerDrafts?.length ? itemLayerDrafts[itemLayerDrafts.length - 1].id : null;
+    return settingsPayload;
+  }
+
+  async function buildDrawnAvatarCharacterProfileRecord(options) {
+    options = options || {};
+    const { loadedImages, itemLayerDrafts, drawingDraft, name = "お絵描きキャラ" } = options;
+    const size = validateAvatarImageSetDimensions(loadedImages);
+    const now = new Date().toISOString();
+    let settingsPayload = scaleSettingsPayloadForAvatarSize(
+      buildAllSettingsPayload({ includeItemImages: false, includeBaseline: false }),
+      { w: CROP.w, h: CROP.h },
+      size
+    );
+    // 前キャラの点情報・ワープ・基準値は引き継がない。お絵描きキャラは完成直後の新キャラ作成ウィザードで設定する。
+    delete settingsPayload.deformers;
+    delete settingsPayload.faceCenterSetup;
+    delete settingsPayload.eyeSetup;
+    delete settingsPayload.faceDepthSetup;
+    delete settingsPayload.neckPivotSetup;
+    delete settingsPayload.hairBundleSetup;
+    delete settingsPayload.highlightSetup;
+    delete settingsPayload.baselineSettings;
+    applyStandardAvatarRigBaseline(settingsPayload);
+    settingsPayload.state = {
+      ...(settingsPayload.state || {}),
+      frontHairShadowEnabled: false,
+      highlightEnabled: false,
+      highlightSetupMode: false,
+    };
+    settingsPayload.itemLayers = (itemLayerDrafts || []).map((draft) => ({ ...draft }));
+    settingsPayload.activeItemLayerId = itemLayerDrafts?.length ? itemLayerDrafts[itemLayerDrafts.length - 1].id : null;
+    const itemImageBlobs = collectItemImageBlobsFromSettingsPayload(settingsPayload);
+    settingsPayload = stripItemLayerSourcesFromSettingsPayload(settingsPayload);
+    const avatarImageBlobs = await avatarImageBlobsFromLoadedImages(loadedImages);
+    const thumbnailDataUrl = await buildAvatarCompositeThumbnailDataUrl(loadedImages);
+    return {
+      schemaVersion: 1,
+      id: createCharacterId(),
+      name,
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: now,
+      thumbnailDataUrl,
+      avatarImageSize: { width: size.w, height: size.h },
+      settingsPayload,
+      avatarImageBlobs,
+      itemImageBlobs,
+      cachedPackageBlob: null,
+      cachedPackageUpdatedAt: null,
+      source: { kind: DRAWN_AVATAR_SOURCE_KIND, fileName: null, drawingAvatarDraft: drawingDraft || null },
+      lastError: null,
+    };
+  }
+
+  async function updateDrawnAvatarCharacterProfileFromSession(session, loadedImages, itemLayerDrafts, drawingDraft) {
+    const targetId = session?.targetCharacterId || activeCharacterId;
+    if (!targetId) throw new Error("更新するお絵描きキャラが見つかりません。");
+    const current = await getCharacterProfile(targetId);
+    if (!current) throw new Error("更新するお絵描きキャラが見つかりません。");
+    if (current.source?.kind !== DRAWN_AVATAR_SOURCE_KIND) {
+      throw new Error("このキャラはお絵描きキャラではないため、書き直し更新できません。");
+    }
+    const size = validateAvatarImageSetDimensions(loadedImages);
+    const settingsPayload = buildDrawnAvatarSettingsPayloadForUpdate(itemLayerDrafts);
+    const itemImageBlobs = collectItemImageBlobsFromSettingsPayload({
+      itemLayers: itemLayerDrafts || [],
+    });
+    const avatarImageBlobs = await avatarImageBlobsFromLoadedImages(loadedImages);
+    const updatedRecord = {
+      ...current,
+      updatedAt: new Date().toISOString(),
+      avatarImageSize: { width: size.w, height: size.h },
+      settingsPayload,
+      avatarImageBlobs,
+      itemImageBlobs,
+      thumbnailDataUrl: await buildAvatarCompositeThumbnailDataUrl(loadedImages),
+      cachedPackageBlob: null,
+      cachedPackageUpdatedAt: null,
+      source: {
+        ...(current.source || {}),
+        kind: DRAWN_AVATAR_SOURCE_KIND,
+        fileName: null,
+        drawingAvatarDraft: drawingDraft || null,
+      },
+      lastError: null,
+    };
+    await putCharacterProfile(updatedRecord);
+    await applyCharacterProfileRecord(updatedRecord, { preserveGlobalRuntime: true });
+    activeCharacterId = updatedRecord.id;
+    rememberActiveCharacterId(updatedRecord.id);
+    characterDirty = { settings: false, avatarImages: false, itemImages: false, thumbnail: false };
+    updateCharacterSaveStatus("保存済み");
+    await updateCharacterSwitcherUi();
+    return updatedRecord;
+  }
+
+  async function finishDrawingAvatarCreation() {
+    const session = drawingAvatarSession;
+    if (!session || drawingAvatarFinishing) return false;
+    if (!characterLibraryReady) {
+      setDrawingAvatarStatus("キャラ管理の準備が完了していないため、まだ完成できません。少し待ってから再試行してください。");
+      return false;
+    }
+    prepareDrawingAvatarFinishInteractionState();
+    if (!canSwitchCharacterNow()) {
+      setDrawingAvatarStatus("他の編集・切り替え処理が終わってから完成してください。");
+      return false;
+    }
+    drawingAvatarFinishing = true;
+    updateDrawingAvatarUi({ rebuildList: false });
+    setDrawingAvatarStatus("表情差分を合成して、新しいキャラを作成しています…");
+    try {
+      const loadedImages = await buildDrawnAvatarImages(session);
+      const itemLayerDrafts = await buildDrawnAvatarItemLayerDrafts(session);
+      const drawingDraft = await serializeDrawingAvatarSession(session);
+      if (session.mode === "edit") {
+        setDrawingAvatarStatus("表情差分を合成して、現在のお絵描きキャラへ反映しています…");
+        await updateDrawnAvatarCharacterProfileFromSession(session, loadedImages, itemLayerDrafts, drawingDraft);
+      } else {
+        const record = await buildDrawnAvatarCharacterProfileRecord({ loadedImages, itemLayerDrafts, drawingDraft });
+        await putCharacterProfile(record);
+        const switched = await switchCharacterProfile(record.id);
+        if (!switched) throw new Error("お絵描きキャラへの切り替えに失敗しました。キャラ一覧から手動で切り替えてください。");
+      }
+      drawingAvatarSession = null;
+      drawingAvatarStroke = null;
+      if (ui.drawingAvatarPanel) ui.drawingAvatarPanel.hidden = true;
+      if (session.mode === "edit") {
+        setEditStatus("お絵描きキャラを書き直して反映しました。必要ならキャラメニューからもう一度書き直せます。");
+      } else {
+        // 完成後はそのまま既存の新キャラ作成ウィザードへ進み、顔中心・目・口・髪束を合わせてもらう。
+        startCharacterWizard();
+        setEditStatus("お絵描きキャラを追加しました。続けて顔の中心などを設定すると、まばたき・口パク・髪揺れが綺麗に動きます。キャラ作成後もメニューから書き直せます。");
+      }
+      return true;
+    } catch (error) {
+      console.warn("お絵描きキャラの作成に失敗しました。", error);
+      setDrawingAvatarStatus(error instanceof Error ? error.message : "お絵描きキャラの作成に失敗しました。");
+      return false;
+    } finally {
+      drawingAvatarFinishing = false;
+      if (drawingAvatarSession) updateDrawingAvatarUi({ rebuildList: false });
+    }
+  }
+
+  function handleDrawingAvatarLayerListClick(event) {
+    const row = event.target?.closest?.(".drawing-layer-row");
+    const actionButton = event.target?.closest?.("button");
+    if (!row || !actionButton) return;
+    const id = Number(row.dataset.id);
+    const action = actionButton.dataset.act;
+    if (action === "select") setDrawingAvatarActiveLayer(id);
+    else if (action === "mute") toggleDrawingAvatarLayerMute(id);
+    else if (action === "delete") deleteDrawingAvatarItemLayer(id);
+  }
+
+  function drawingAvatarKeyboardEventIsTyping(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return false;
+    const tagName = target.tagName;
+    return Boolean(
+      target.isContentEditable ||
+      tagName === "INPUT" ||
+      tagName === "TEXTAREA" ||
+      tagName === "SELECT"
+    );
+  }
+
+  function handleDrawingAvatarKeydown(event) {
+    const session = drawingAvatarSession;
+    if (!session || !drawingAvatarPanelOpen()) return;
+    const key = String(event.key || "").toLowerCase();
+    if (event.ctrlKey || event.metaKey) {
+      if (key === "z" && !event.shiftKey) {
+        event.preventDefault();
+        undoDrawingAvatarStroke();
+      } else if (key === "y" || (key === "z" && event.shiftKey)) {
+        event.preventDefault();
+        redoDrawingAvatarStroke();
+      }
+      return;
+    }
+    if (drawingAvatarKeyboardEventIsTyping(event)) return;
+    if (event.code === "Space") {
+      if (event.target instanceof HTMLElement && event.target.tagName === "BUTTON") event.target.blur();
+      if (!drawingAvatarSpaceDown) {
+        drawingAvatarSpaceDown = true;
+        syncDrawingAvatarCursorMode();
+        drawDrawingAvatarOverlay();
+      }
+      event.preventDefault();
+      return;
+    }
+    if (key === "b") setDrawingAvatarTool("brush");
+    else if (key === "g") setDrawingAvatarTool("fill");
+    else if (key === "e") setDrawingAvatarTool("eraser");
+    else if (key === "[") {
+      session.brushSize = Math.max(1, Math.round(session.brushSize * 0.85) - 1);
+      syncDrawingAvatarToolControls();
+    } else if (key === "]") {
+      session.brushSize = Math.min(400, Math.round(session.brushSize * 1.18) + 1);
+      syncDrawingAvatarToolControls();
+    } else if (key === "+" || key === "=") {
+      zoomDrawingAvatarAt(Math.max(1, drawingAvatarViewportWidth) / 2, Math.max(1, drawingAvatarViewportHeight) / 2, 1.25);
+    } else if (key === "-") {
+      zoomDrawingAvatarAt(Math.max(1, drawingAvatarViewportWidth) / 2, Math.max(1, drawingAvatarViewportHeight) / 2, 0.8);
+    } else if (key === "0") {
+      fitDrawingAvatarViewport();
+      scheduleDrawingAvatarRender();
+      drawDrawingAvatarOverlay();
+    }
+  }
+
+  function handleDrawingAvatarKeyup(event) {
+    if (!drawingAvatarPanelOpen()) return;
+    if (event.code !== "Space") return;
+    drawingAvatarSpaceDown = false;
+    syncDrawingAvatarCursorMode();
+    drawDrawingAvatarOverlay();
+  }
+
+  function handleDrawingAvatarWindowBlur() {
+    drawingAvatarSpaceDown = false;
+    drawingAvatarPan = null;
+    syncDrawingAvatarCursorMode();
+    drawDrawingAvatarOverlay();
+  }
+
+  function setDrawingAvatarTool(tool) {
+    const session = drawingAvatarSession;
+    if (!session) return;
+    session.tool = ["brush", "fill", "eraser"].includes(tool) ? tool : "brush";
+    updateDrawingAvatarUi({ rebuildList: false });
+  }
+
+  function bindDrawingAvatarControls() {
+    ui.drawingAvatarStartButton?.addEventListener("click", () => openDrawingAvatarPanel());
+    ui.drawingAvatarMenuButton?.addEventListener("click", () => {
+      closeCharacterSwitcherMenu();
+      openDrawingAvatarPanel();
+    });
+    ui.drawingAvatarEditButton?.addEventListener("click", () => {
+      void openDrawingAvatarPanelForActiveCharacterEdit();
+    });
+    ui.drawingAvatarCancelButton?.addEventListener("click", () => closeDrawingAvatarPanel());
+    ui.drawingAvatarBrushButton?.addEventListener("click", () => setDrawingAvatarTool("brush"));
+    ui.drawingAvatarFillButton?.addEventListener("click", () => setDrawingAvatarTool("fill"));
+    ui.drawingAvatarEraserButton?.addEventListener("click", () => setDrawingAvatarTool("eraser"));
+    ui.drawingAvatarBrushSize?.addEventListener("input", (event) => {
+      if (!drawingAvatarSession) return;
+      drawingAvatarSession.brushSize = Math.round(clamp(Number(event.target.value) || 14, 1, 400));
+      syncDrawingAvatarToolControls();
+    });
+    ui.drawingAvatarBrushSoftness?.addEventListener("input", (event) => {
+      if (!drawingAvatarSession) return;
+      drawingAvatarSession.brushSoftness = Math.round(clamp(Number(event.target.value) || 0, 0, 100));
+      syncDrawingAvatarToolControls();
+    });
+    ui.drawingAvatarBrushStabilization?.addEventListener("input", (event) => {
+      if (!drawingAvatarSession) return;
+      drawingAvatarSession.brushStabilization = Math.round(clamp(Number(event.target.value) || 0, 0, 100));
+      syncDrawingAvatarToolControls();
+    });
+    ui.drawingAvatarPressureEnabled?.addEventListener("change", (event) => {
+      if (!drawingAvatarSession) return;
+      drawingAvatarSession.pressureEnabled = Boolean(event.target.checked);
+      syncDrawingAvatarToolControls();
+    });
+    ui.drawingAvatarColorInput?.addEventListener("input", (event) => {
+      if (!drawingAvatarSession) return;
+      const color = normalizeHexColor(event.target.value) || drawingAvatarSession.color;
+      drawingAvatarSession.color = color;
+      const buttons = drawingAvatarColorSwatchButtons();
+      const index = Math.round(clamp(Number(drawingAvatarSession.activeColorSwatchIndex) || 0, 0, Math.max(0, buttons.length - 1)));
+      if (buttons[index]) buttons[index].dataset.color = color;
+      drawingAvatarSession.swatchColors = drawingAvatarSwatchColorsFromUi();
+      if (drawingAvatarSession.tool === "eraser") drawingAvatarSession.tool = "brush";
+      updateDrawingAvatarUi({ rebuildList: false });
+    });
+    ui.drawingAvatarColorSwatches?.addEventListener("click", (event) => {
+      const button = event.target instanceof Element ? event.target.closest("[data-color]") : null;
+      const color = normalizeHexColor(button?.dataset?.color);
+      if (!drawingAvatarSession || !button || !color) return;
+      const buttons = drawingAvatarColorSwatchButtons();
+      drawingAvatarSession.activeColorSwatchIndex = Math.max(0, buttons.indexOf(button));
+      drawingAvatarSession.color = color;
+      drawingAvatarSession.swatchColors = drawingAvatarSwatchColorsFromUi();
+      if (drawingAvatarSession.tool === "eraser") drawingAvatarSession.tool = "brush";
+      setDrawingAvatarStatus(`ブラシ色を ${color} に切り替えました。`);
+      updateDrawingAvatarUi({ rebuildList: false });
+    });
+    ui.drawingAvatarUndoButton?.addEventListener("click", () => undoDrawingAvatarStroke());
+    ui.drawingAvatarRedoButton?.addEventListener("click", () => redoDrawingAvatarStroke());
+    ui.drawingAvatarClearButton?.addEventListener("click", () => clearDrawingAvatarActiveLayer());
+    ui.drawingAvatarOnionSkin?.addEventListener("change", (event) => {
+      if (!drawingAvatarSession) return;
+      drawingAvatarSession.onionSkin = Boolean(event.target.checked);
+      scheduleDrawingAvatarRender();
+    });
+    ui.drawingAvatarAddItemButton?.addEventListener("click", () => addDrawingAvatarItemLayer());
+    ui.drawingAvatarImportImageButton?.addEventListener("click", () => {
+      if (!drawingAvatarSession) return;
+      if (ui.drawingAvatarImageFileInput) {
+        ui.drawingAvatarImageFileInput.value = "";
+        ui.drawingAvatarImageFileInput.click();
+      }
+    });
+    ui.drawingAvatarImageFileInput?.addEventListener("change", (event) => {
+      void importDrawingAvatarImagesToActiveLayer(event.target?.files);
+    });
+    ui.drawingAvatarImageRemoveButton?.addEventListener("click", () => removeDrawingAvatarImportedImage());
+    for (const [input, prop] of [
+      [ui.drawingAvatarImageX, "x"],
+      [ui.drawingAvatarImageY, "y"],
+      [ui.drawingAvatarImageScale, "scale"],
+    ]) {
+      input?.addEventListener("pointerdown", () => beginDrawingAvatarImageTransformHistory());
+      input?.addEventListener("keydown", () => beginDrawingAvatarImageTransformHistory());
+      input?.addEventListener("input", (event) => {
+        beginDrawingAvatarImageTransformHistory();
+        setDrawingAvatarImportedImageTransform(prop, event.target.value);
+      });
+      input?.addEventListener("change", () => endDrawingAvatarImageTransformHistory());
+      input?.addEventListener("pointerup", () => endDrawingAvatarImageTransformHistory());
+      input?.addEventListener("blur", () => endDrawingAvatarImageTransformHistory());
+    }
+    ui.drawingAvatarImageCenterButton?.addEventListener("click", () => centerDrawingAvatarImportedImage());
+    ui.drawingAvatarLayerList?.addEventListener("click", handleDrawingAvatarLayerListClick);
+    ui.drawingAvatarFinishButton?.addEventListener("click", () => {
+      void finishDrawingAvatarCreation();
+    });
+    ui.drawingAvatarZoomInButton?.addEventListener("click", () => {
+      zoomDrawingAvatarAt(Math.max(1, drawingAvatarViewportWidth) / 2, Math.max(1, drawingAvatarViewportHeight) / 2, 1.25);
+    });
+    ui.drawingAvatarZoomOutButton?.addEventListener("click", () => {
+      zoomDrawingAvatarAt(Math.max(1, drawingAvatarViewportWidth) / 2, Math.max(1, drawingAvatarViewportHeight) / 2, 0.8);
+    });
+    ui.drawingAvatarZoomFitButton?.addEventListener("click", () => {
+      fitDrawingAvatarViewport();
+      scheduleDrawingAvatarRender();
+      drawDrawingAvatarOverlay();
+    });
+    ui.drawingAvatarZoomLabelButton?.addEventListener("click", () => setDrawingAvatarZoom(1));
+    ui.drawingAvatarCanvasFrame?.addEventListener("wheel", (event) => {
+      if (!drawingAvatarSession || !drawingAvatarPanelOpen()) return;
+      const point = drawingAvatarScreenPoint(event);
+      if (!point) return;
+      event.preventDefault();
+      zoomDrawingAvatarAt(point.x, point.y, Math.exp(-event.deltaY * 0.0016));
+    }, { passive: false });
+    ui.drawingAvatarCanvas?.addEventListener("pointerdown", beginDrawingAvatarStroke);
+    ui.drawingAvatarCanvas?.addEventListener("pointermove", continueDrawingAvatarStroke);
+    ui.drawingAvatarCanvas?.addEventListener("pointerup", endDrawingAvatarStroke);
+    ui.drawingAvatarCanvas?.addEventListener("pointercancel", endDrawingAvatarStroke);
+    ui.drawingAvatarCanvas?.addEventListener("pointerleave", () => {
+      drawingAvatarCursorPoint = null;
+      drawDrawingAvatarOverlay();
+    });
+    window.addEventListener("keydown", handleDrawingAvatarKeydown);
+    window.addEventListener("keyup", handleDrawingAvatarKeyup);
+    window.addEventListener("blur", handleDrawingAvatarWindowBlur);
+    if (ui.drawingAvatarCanvasFrame && "ResizeObserver" in window && !drawingAvatarResizeObserver) {
+      drawingAvatarResizeObserver = new ResizeObserver(() => {
+        if (drawingAvatarPanelOpen()) resizeDrawingAvatarViewport();
+      });
+      drawingAvatarResizeObserver.observe(ui.drawingAvatarCanvasFrame);
+    } else {
+      window.addEventListener("resize", () => {
+        if (drawingAvatarPanelOpen()) resizeDrawingAvatarViewport({ forceFit: true });
+      });
+    }
+  }
+
   async function ensureDemoAvatar02CharacterProfile() {
+    if (autoCharacterSourceWasDeleted(DEMO_AVATAR02_SOURCE_KIND)) return false;
     const profiles = await listCharacterProfiles();
-    if (profiles.some((profile) => profile.source?.kind === DEMO_AVATAR02_SOURCE_KIND)) return false;
+    if (profiles.some((profile) => managedDemoAvatarSourceKindForProfile(profile) === DEMO_AVATAR02_SOURCE_KIND)) return false;
 
     const isPrimaryCharacterProfile = (profile) =>
       profile?.source?.kind === "default" || String(profile?.name || "") === "キャラ1";
@@ -3780,8 +6370,9 @@
   }
 
   async function ensureDemoAvatar03CharacterProfile() {
+    if (autoCharacterSourceWasDeleted(DEMO_AVATAR03_SOURCE_KIND)) return false;
     const profiles = await listCharacterProfiles();
-    if (profiles.some((profile) => profile.source?.kind === DEMO_AVATAR03_SOURCE_KIND)) return false;
+    if (profiles.some((profile) => managedDemoAvatarSourceKindForProfile(profile) === DEMO_AVATAR03_SOURCE_KIND)) return false;
 
     const record = await buildCharacterProfileRecordFromAssetMap({
       assetMap: DEMO_AVATAR03_ASSETS,
@@ -3863,18 +6454,22 @@
 
     lastObsInputPostAt = nowMs;
     obsInputPostPending = true;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OBS_INPUT_FETCH_TIMEOUT_MS);
     fetch("/api/obs/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildObsInputPayload(nowMs)),
-  })
-    .then((response) => {
-      if (!response.ok) throw new Error(`OBS input ${response.status}`);
+      body: JSON.stringify(buildObsInputPayload(nowMs)),
+      signal: controller.signal,
     })
+      .then((response) => {
+        if (!response.ok) throw new Error(`OBS input ${response.status}`);
+      })
       .catch(() => {
         if (obsPublishEnabled) setObsStatus("OBS連携: ローカルサーバーへ入力値を送信できません。");
       })
       .finally(() => {
+        clearTimeout(timeoutId);
         obsInputPostPending = false;
       });
   }
@@ -3906,13 +6501,15 @@
   function connectObsEventSource() {
     if (!OBS_MODE || obsEventSource) return;
     try {
-      const es = new EventSource("/api/obs/events");
+      const eventUrl = obsLastEventId > 0 ? `/api/obs/events?lastEventId=${encodeURIComponent(String(obsLastEventId))}` : "/api/obs/events";
+      const es = new EventSource(eventUrl);
       obsEventSource = es;
       es.addEventListener("open", () => {
         obsExternalInput.connected = true;
       });
       es.addEventListener("input", (event) => {
         try {
+          obsLastEventId = Math.max(obsLastEventId, Math.round(Number(event.lastEventId) || 0));
           const data = sanitizeImportedJsonValue(JSON.parse(event.data));
           obsExternalInput.targetX = clamp(Number(data.targetX) || 0, -3, 3);
           obsExternalInput.targetY = clamp(Number(data.targetY) || 0, -3, 3);
@@ -3925,11 +6522,13 @@
           console.warn("OBS input parse failed", error);
         }
       });
-      es.addEventListener("snapshot", () => {
+      es.addEventListener("snapshot", (event) => {
+        obsLastEventId = Math.max(obsLastEventId, Math.round(Number(event.lastEventId) || 0));
         loadObsSnapshotIfAvailable();
       });
       es.addEventListener("config", (event) => {
         try {
+          obsLastEventId = Math.max(obsLastEventId, Math.round(Number(event.lastEventId) || 0));
           applyObsPresetConfig(sanitizeImportedJsonValue(JSON.parse(event.data)), { announce: true });
         } catch (error) {
           console.warn("OBS config parse failed", error);
@@ -4044,6 +6643,7 @@
       let normalized = "";
       try {
         normalized = validatePngDataUrl(src, name, MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE);
+        validateAvatarImageSize(pngU8Dimensions(dataUrlToU8(normalized), name), name);
       } catch (error) {
         reject(error);
         return;
@@ -4058,21 +6658,19 @@
   async function applyObsSnapshot(snapshot) {
     if (!snapshot || snapshot.type !== "purupuru-obs-snapshot") return false;
     if (snapshot.avatarImages && typeof snapshot.avatarImages === "object") {
+      const requiredKeys = Object.keys(AVATAR_PACKAGE_ASSETS);
       const loaded = {};
       let expectedAvatarSize = null;
-      const settled = await Promise.allSettled(Object.keys(AVATAR_PACKAGE_ASSETS).map(async (key) => {
+      const settled = await Promise.allSettled(requiredKeys.map(async (key) => {
         const src = String(snapshot.avatarImages[key] || "");
-        if (!src) return null;
+        if (!src) throw new Error(`OBSスナップショットのアバター画像が不足しています: ${key}`);
         const image = await loadImageFromDataUrl(src, key);
         return [key, image];
       }));
       let loadedCount = 0;
-      let failedCount = 0;
       for (const result of settled) {
         if (result.status === "rejected") {
-          failedCount += 1;
-          console.warn("OBS snapshot avatar image skipped", result.reason);
-          continue;
+          throw result.reason;
         }
         const entry = result.value;
         if (!entry) continue;
@@ -4081,15 +6679,10 @@
         loaded[key] = image;
         loadedCount += 1;
       }
-      if (loadedCount === 0 && failedCount > 0) {
-        throw new Error("OBSスナップショットのアバター画像を読み込めませんでした。");
+      if (loadedCount !== requiredKeys.length) {
+        throw new Error("OBSスナップショットのアバター画像が不足しています。通常画面からOBSへ再反映してください。");
       }
-      if (failedCount > 0) {
-        setObsStatus(`${failedCount}枚のOBSスナップショット画像を読み込めなかったため、既存画像で補完しました。`);
-      }
-      if (loadedCount > 0) {
-        applyLoadedAvatarImages(loaded);
-      }
+      applyLoadedAvatarImages(loaded);
     }
     if (snapshot.settings) {
       await applyAllSettingsPayload(snapshot.settings, "OBS用スナップショットを読み込みました。");
@@ -4243,18 +6836,10 @@
     hairTintCache.clear();
   }
 
-  function applyHairTintLightness(targetCtx, image, color, lightness) {
-    if (lightness <= 0) return;
-    const width = image.naturalWidth || image.width;
-    const height = image.naturalHeight || image.height;
-    const sourceCanvas = document.createElement("canvas");
-    sourceCanvas.width = width;
-    sourceCanvas.height = height;
-    const sourceCtx = sourceCanvas.getContext("2d");
-    if (!sourceCtx) return;
-    sourceCtx.drawImage(image, 0, 0);
-
-    const sourceData = sourceCtx.getImageData(0, 0, width, height).data;
+  // 色相・明るさをストレートアルファの画素値へ直接適用する。
+  // Canvasの"color"合成やアルファ比例の明るさ補正は半透明の縁ピクセルだけ暗く残し、
+  // 同色の前髪と後ろ髪が重なる境目に暗い線が見えるため、アルファに依存しない処理にしている。
+  function applyHairTintPixels(targetCtx, width, height, color, lightness) {
     const imageData = targetCtx.getImageData(0, 0, width, height);
     const data = imageData.data;
     const rgb = hexToRgb(color);
@@ -4264,19 +6849,43 @@
       b: lerp(rgb.b, 255, 0.74),
     };
     const amount = clamp(lightness, 0, 100) / 100;
+    const tintLum = rgb.r * 0.3 + rgb.g * 0.59 + rgb.b * 0.11;
 
     for (let i = 0; i < data.length; i += 4) {
-      const alpha = sourceData[i + 3] / 255;
-      if (alpha <= 0) continue;
-      const luma =
-        (sourceData[i] * 0.2126 + sourceData[i + 1] * 0.7152 + sourceData[i + 2] * 0.0722) / 255;
+      if (data[i + 3] <= 0) continue;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      // "color"合成と同等の輝度保存カラライズ（元画素の輝度 + ティント色の色相）。
+      const lum = r * 0.3 + g * 0.59 + b * 0.11;
+      const shift = lum - tintLum;
+      let tr = rgb.r + shift;
+      let tg = rgb.g + shift;
+      let tb = rgb.b + shift;
+      const minC = Math.min(tr, tg, tb);
+      const maxC = Math.max(tr, tg, tb);
+      if (minC < 0) {
+        const d = lum - minC || 1;
+        tr = lum + ((tr - lum) * lum) / d;
+        tg = lum + ((tg - lum) * lum) / d;
+        tb = lum + ((tb - lum) * lum) / d;
+      }
+      if (maxC > 255) {
+        const d = maxC - lum || 1;
+        tr = lum + ((tr - lum) * (255 - lum)) / d;
+        tg = lum + ((tg - lum) * (255 - lum)) / d;
+        tb = lum + ((tb - lum) * (255 - lum)) / d;
+      }
+
       // ほぼ黒い線画は守り、髪面とハイライト側を中心に白寄りへ混ぜてパステル感を出す。
+      const luma = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 255;
       const surfaceMask = smoothstep(0.025, 0.16, luma);
       const highlightMask = lerp(0.72, 1, smoothstep(0.12, 0.72, luma));
-      const mix = amount * surfaceMask * highlightMask * alpha * 0.86;
-      data[i] = Math.round(lerp(data[i], pastel.r, mix));
-      data[i + 1] = Math.round(lerp(data[i + 1], pastel.g, mix));
-      data[i + 2] = Math.round(lerp(data[i + 2], pastel.b, mix));
+      const mix = amount * surfaceMask * highlightMask * 0.86;
+      data[i] = Math.round(clamp(lerp(tr, pastel.r, mix), 0, 255));
+      data[i + 1] = Math.round(clamp(lerp(tg, pastel.g, mix), 0, 255));
+      data[i + 2] = Math.round(clamp(lerp(tb, pastel.b, mix), 0, 255));
     }
 
     targetCtx.putImageData(imageData, 0, 0);
@@ -4311,20 +6920,11 @@
       const colorCanvas = document.createElement("canvas");
       colorCanvas.width = width;
       colorCanvas.height = height;
-      const colorCtx = colorCanvas.getContext("2d");
+      const colorCtx = colorCanvas.getContext("2d", { willReadFrequently: true });
       if (!colorCtx) return image;
 
       colorCtx.drawImage(image, 0, 0);
-      colorCtx.globalCompositeOperation = "color";
-      if (colorCtx.globalCompositeOperation !== "color") {
-        colorCtx.globalCompositeOperation = "source-atop";
-      }
-      colorCtx.fillStyle = color;
-      colorCtx.fillRect(0, 0, width, height);
-      colorCtx.globalCompositeOperation = "destination-in";
-      colorCtx.drawImage(image, 0, 0);
-      colorCtx.globalCompositeOperation = "source-over";
-      applyHairTintLightness(colorCtx, image, color, lightness);
+      applyHairTintPixels(colorCtx, width, height, color, lightness);
 
       rememberTintedHairImage(cacheKey, colorCanvas);
       return colorCanvas;
@@ -4574,6 +7174,37 @@
         EYE_LENS_LIMITS.radiusY.max
       ),
     };
+  }
+
+  function estimatedEyeLensRadiusForCenters(centers) {
+    const normalized = normalizeEyeCenters(centers);
+    if (!normalized) return { ...DEFAULT_EYE_LENS_RADIUS };
+    const eyeDistance = Math.hypot(
+      normalized[1].x - normalized[0].x,
+      normalized[1].y - normalized[0].y
+    );
+    if (!Number.isFinite(eyeDistance) || eyeDistance <= 0) return { ...DEFAULT_EYE_LENS_RADIUS };
+    return {
+      x: Math.round(clamp(eyeDistance * 0.28, EYE_LENS_LIMITS.radiusX.min, EYE_LENS_LIMITS.radiusX.max)),
+      y: Math.round(clamp(eyeDistance * 0.20, EYE_LENS_LIMITS.radiusY.min, EYE_LENS_LIMITS.radiusY.max)),
+    };
+  }
+
+  function resetHighlightMotionState() {
+    highlightPulseLeftX = 1;
+    highlightPulseLeftY = 1;
+    highlightPulseRightX = 1;
+    highlightPulseRightY = 1;
+    highlightPulseLeftTargetX = 1;
+    highlightPulseLeftTargetY = 1;
+    highlightPulseRightTargetX = 1;
+    highlightPulseRightTargetY = 1;
+    highlightGyroX = 0;
+    highlightGyroY = 0;
+    highlightGyroLagX = 0;
+    highlightGyroLagY = 0;
+    blinkBounceTriggerTime = -10;
+    highlightEyesWarped = null;
   }
 
   function eyeLensRotationForIndex(index) {
@@ -5107,19 +7738,27 @@
     return normalizeHairBundleRig(rig) || defaultHairBundleRig();
   }
 
+  function resetHairBundleGroupToDefault(rig, group) {
+    const next = cloneHairBundleRig(rig);
+    const defaults = defaultHairBundleRig();
+    for (const def of HAIR_BUNDLE_DEFS) {
+      if (def.group === group) next[def.key] = defaults[def.key];
+    }
+    return next;
+  }
+
   function createCharacterWizardDraft() {
-    const anchors = cloneFaceDepthAnchors(currentFaceDepthAnchors());
     return {
       version: 1,
-      faceCenter: cloneRigPoint(currentFaceCenter()),
+      faceCenter: null,
       faceAnchors: {
-        leftEye: cloneRigPoint(anchors.leftEye),
-        rightEye: cloneRigPoint(anchors.rightEye),
-        nose: cloneRigPoint(anchors.nose),
-        mouth: cloneRigPoint(anchors.mouth),
-        chin: cloneRigPoint(anchors.chin),
+        leftEye: null,
+        rightEye: null,
+        nose: null,
+        mouth: null,
+        chin: null,
       },
-      neckPivot: cloneRigPoint(currentNeckPivot()),
+      neckPivot: null,
       hairBundles: cloneHairBundleRig(currentHairBundleRig()),
     };
   }
@@ -5154,6 +7793,18 @@
     return CHARACTER_WIZARD_STEP_DEFS[characterWizardStepKey()] || CHARACTER_WIZARD_STEP_DEFS.faceCenter;
   }
 
+  function characterWizardHairGroup(stepKey = characterWizardStepKey()) {
+    return CHARACTER_WIZARD_STEP_DEFS[stepKey]?.hairGroup || null;
+  }
+
+  function characterWizardHairGroupLabel(group) {
+    return {
+      front: "前髪",
+      side: "横髪",
+      back: "後ろ髪",
+    }[group] || "髪束";
+  }
+
   function characterWizardStepNumberText() {
     const current = Math.min((characterWizard?.stepIndex || 0) + 1, CHARACTER_WIZARD_STEPS.length);
     return `${current} / ${CHARACTER_WIZARD_STEPS.length}`;
@@ -5165,6 +7816,20 @@
     let value = characterWizard.draft;
     for (const key of def.pointPath) value = value?.[key];
     return normalizeFaceCenter(value);
+  }
+
+  function characterWizardCurrentPointForStep(stepKey = characterWizardStepKey()) {
+    if (stepKey === "faceCenter") return normalizeFaceCenter(currentFaceCenter());
+    if (stepKey === "neckPivot") return normalizeFaceCenter(currentNeckPivot());
+    const anchors = currentFaceDepthAnchors();
+    if (["leftEye", "rightEye", "nose", "mouth", "chin"].includes(stepKey)) {
+      return normalizeFaceCenter(anchors?.[stepKey]);
+    }
+    return null;
+  }
+
+  function characterWizardDisplayPointForStep(stepKey = characterWizardStepKey()) {
+    return characterWizardPointForStep(stepKey) || characterWizardCurrentPointForStep(stepKey);
   }
 
   function setCharacterWizardPointForStep(point, stepKey = characterWizardStepKey()) {
@@ -5194,16 +7859,19 @@
   function syncCharacterWizardHairStep() {
     if (!characterWizard?.active) return;
     const stepKey = characterWizardStepKey();
-    if (stepKey === "hairBundles") {
+    const hairGroup = characterWizardHairGroup(stepKey);
+    if (hairGroup) {
       state.hairBundleSetupMode = true;
       state.eyeSetupMode = false;
       state.highlightSetupMode = false;
       state.faceDepthSetupMode = false;
       state.neckPivotSetupMode = false;
       state.editMode = false;
+      hairBundleFocus = hairGroup;
+      if (ui.hairBundleFocusSelect) ui.hairBundleFocusSelect.value = hairGroup;
       setHairBundleRigRaw(characterWizard.draft.hairBundles, { normalized: true });
       setPreviewTarget(0, 0);
-      setHairBundleSetupStatus("白丸を髪の生え際、色丸を毛先に合わせてください。ズレた線だけ直せます。");
+      setHairBundleSetupStatus(`${characterWizardHairGroupLabel(hairGroup)}だけ表示中。白丸を髪の生え際、色丸を毛先に合わせてください。`);
     } else {
       if (state.hairBundleSetupMode) state.hairBundleSetupMode = false;
       hairBundleSetupDrag = null;
@@ -5217,6 +7885,7 @@
       const btn = ui[def.button];
       if (btn) btn.disabled = disabled;
     }
+    if (ui.hairBundleFocusSelect) ui.hairBundleFocusSelect.disabled = disabled;
   }
 
   function updateCharacterWizardViewControls() {
@@ -5246,15 +7915,24 @@
     if (ui.characterWizardSkipButton) ui.characterWizardSkipButton.hidden = stepKey === "finish";
     if (ui.characterWizardRetryButton) ui.characterWizardRetryButton.hidden = stepKey === "finish";
     if (ui.characterWizardOkButton) {
-      ui.characterWizardOkButton.textContent = stepKey === "finish" ? "完了して反映" : "この点でOK";
+      ui.characterWizardOkButton.textContent = stepKey === "finish"
+        ? "完了して反映"
+        : characterWizardHairGroup(stepKey)
+          ? "この線でOK"
+          : "この点でOK";
     }
-    const point = characterWizardPointForStep(stepKey);
-    const defaultStatus = stepKey === "hairBundles"
-      ? "髪束ラインを確認し、ズレた線だけドラッグで直してください。"
+    const draftPoint = characterWizardPointForStep(stepKey);
+    const currentPoint = draftPoint ? null : characterWizardCurrentPointForStep(stepKey);
+    const point = draftPoint || currentPoint;
+    const hairGroup = characterWizardHairGroup(stepKey);
+    const defaultStatus = hairGroup
+      ? `${characterWizardHairGroupLabel(hairGroup)}の髪束ラインだけ表示中です。ズレた線をドラッグで直してください。`
       : stepKey === "finish"
         ? "完了すると、瞳位置・奥行き点・首支点・髪束・ハイライト・基準値をまとめて保存します。"
-        : point
+        : draftPoint
           ? `${def.label}: x=${Math.round(point.x)}, y=${Math.round(point.y)}。良ければ「この点でOK」。`
+          : currentPoint
+            ? `現在の${def.label}: x=${Math.round(point.x)}, y=${Math.round(point.y)}。変更しないなら「この点でOK」、変更するならキャンバス上でクリックしてください。`
           : `${def.label}をキャンバス上でクリックしてください。`;
     setCharacterWizardStatus(statusText || defaultStatus);
     syncCharacterWizardHairStep();
@@ -5270,11 +7948,14 @@
       original: captureCharacterWizardOriginal(),
     };
     setPreviewTarget(0, 0);
-    updateCharacterWizardUi("顔の中心をキャンバス上でクリックしてください。");
+    updateCharacterWizardUi();
   }
 
   function closeCharacterWizard({ restore = false } = {}) {
+    const originalHairFocus = characterWizard?.original?.hairFocus;
     if (restore) restoreCharacterWizardOriginal(characterWizard?.original);
+    hairBundleFocus = normalizeHairBundleFocus(originalHairFocus);
+    if (ui.hairBundleFocusSelect) ui.hairBundleFocusSelect.value = hairBundleFocus;
     characterWizard = null;
     state.hairBundleSetupMode = false;
     hairBundleSetupDrag = null;
@@ -5286,6 +7967,7 @@
   function autoFillCharacterWizardStep() {
     if (!characterWizard?.active) return false;
     const stepKey = characterWizardStepKey();
+    const hairGroup = characterWizardHairGroup(stepKey);
     const anchors = currentFaceDepthAnchors();
     const draftCenter = normalizeFaceCenter(characterWizard.draft?.faceCenter) || currentFaceCenter();
     const draftAnchors = characterWizard.draft?.faceAnchors || {};
@@ -5300,10 +7982,10 @@
       chin: estimatedAnchors.chin,
       neckPivot: currentNeckPivot(),
     };
-    if (stepKey === "hairBundles") {
-      characterWizard.draft.hairBundles = defaultHairBundleRig();
+    if (hairGroup) {
+      characterWizard.draft.hairBundles = resetHairBundleGroupToDefault(currentHairBundleRig(), hairGroup);
       setHairBundleRigRaw(characterWizard.draft.hairBundles, { normalized: true });
-      updateCharacterWizardUi("標準テンプレを配置しました。白丸は生え際、色丸は毛先に合わせてください。");
+      updateCharacterWizardUi(`${characterWizardHairGroupLabel(hairGroup)}の線を標準テンプレに戻しました。白丸は生え際、色丸は毛先に合わせてください。`);
       return true;
     }
     if (!defaults[stepKey]) return false;
@@ -5315,10 +7997,11 @@
   function retryCharacterWizardStep() {
     if (!characterWizard?.active) return;
     const stepKey = characterWizardStepKey();
-    if (stepKey === "hairBundles") {
-      characterWizard.draft.hairBundles = defaultHairBundleRig();
+    const hairGroup = characterWizardHairGroup(stepKey);
+    if (hairGroup) {
+      characterWizard.draft.hairBundles = resetHairBundleGroupToDefault(currentHairBundleRig(), hairGroup);
       setHairBundleRigRaw(characterWizard.draft.hairBundles, { normalized: true });
-      updateCharacterWizardUi("髪束ラインを標準テンプレに戻しました。");
+      updateCharacterWizardUi(`${characterWizardHairGroupLabel(hairGroup)}の線を標準テンプレに戻しました。`);
       return;
     }
     const def = CHARACTER_WIZARD_STEP_DEFS[stepKey];
@@ -5332,7 +8015,7 @@
 
   function moveCharacterWizardStep(delta) {
     if (!characterWizard?.active) return;
-    if (characterWizardStepKey() === "hairBundles") {
+    if (characterWizardHairGroup()) {
       characterWizard.draft.hairBundles = cloneHairBundleRig(currentHairBundleRig());
     }
     characterWizard.stepIndex = clamp(characterWizard.stepIndex + delta, 0, CHARACTER_WIZARD_STEPS.length - 1);
@@ -5349,12 +8032,18 @@
       }
       return;
     }
-    if (stepKey === "hairBundles") {
+    if (characterWizardHairGroup(stepKey)) {
       characterWizard.draft.hairBundles = cloneHairBundleRig(currentHairBundleRig());
       moveCharacterWizardStep(1);
       return;
     }
     if (!characterWizardPointForStep(stepKey)) {
+      const existingPoint = characterWizardCurrentPointForStep(stepKey);
+      if (existingPoint) {
+        setCharacterWizardPointForStep(existingPoint, stepKey);
+        moveCharacterWizardStep(1);
+        return;
+      }
       autoFillCharacterWizardStep();
       return;
     }
@@ -5370,8 +8059,9 @@
       setEditStatus("新キャラセットアップの点が不足しています。もう一度ウィザードを確認してください。");
       return false;
     }
+    const wizardEyeCenters = normalizeEyeCenters([anchors.leftEye, anchors.rightEye]) || [anchors.leftEye, anchors.rightEye];
     faceCenterRaw = center;
-    highlightEyesRaw = normalizeEyeCenters([anchors.leftEye, anchors.rightEye]) || [anchors.leftEye, anchors.rightEye];
+    highlightEyesRaw = wizardEyeCenters;
     faceDepthAnchorsRaw = anchors;
     neckPivotRaw = pivot;
     setHairBundleRigRaw(hairRig, { normalized: true });
@@ -5379,7 +8069,7 @@
     // 旧キャラの固定形状を引き継がず、ウィザードで選んだ点を基準にする。
     deformers = createDefaultDeformers();
     safeSetJson(STORAGE_KEY, deformers);
-    autoPlaceHighlightPoints();
+    resetCharacterWizardHighlightFromEyes(wizardEyeCenters);
     saveFaceCenterSetup();
     saveEyeSetup();
     saveFaceDepthSetup();
@@ -5450,6 +8140,28 @@
     }
     setHighlightSetupStatus("ハイライト位置を自動配置できませんでした。先に瞳位置を確認してください。");
     return false;
+  }
+
+  function resetCharacterWizardHighlightFromEyes(centers) {
+    const normalized = normalizeEyeCenters(centers);
+    if (!normalized) return false;
+    highlightEyesRaw = cloneEyeCenters(normalized);
+    const radius = estimatedEyeLensRadiusForCenters(normalized);
+    state.tearLensRadiusX = radius.x;
+    state.tearLensRadiusY = radius.y;
+    state.tearLensRotationLeft = 0;
+    state.tearLensRotationRight = 0;
+    state.highlightSize = 14;
+    state.highlightAspect = 90;
+    state.highlightFilmWobble = 50;
+    state.subHighlightSize = 7;
+    state.subHighlightAspect = 100;
+    state.subHighlightFilmWobble = 25;
+    highlightPointsRaw = null;
+    subHighlightPointsRaw = null;
+    resetHighlightMotionState();
+    resetGeneratedHighlightCanvases();
+    return autoPlaceHighlightPoints();
   }
 
   function ensureSubHighlightPoints() {
@@ -5973,6 +8685,75 @@
     return Boolean(faceTracker?.isRunning());
   }
 
+  async function startMicrophoneFromUi() {
+    if (micPending || micOn) return;
+    micPending = true;
+    if (ui.micButton) ui.micButton.disabled = true;
+    setAudioError("");
+    try {
+      await audioEngine.startMic();
+      micOn = true;
+      if (ui.micButton) {
+        ui.micButton.textContent = "マイク停止";
+        ui.micButton.setAttribute("aria-pressed", "true");
+      }
+    } catch (error) {
+      audioEngine.stopMic();
+      micOn = false;
+      if (ui.micButton) {
+        ui.micButton.textContent = "マイク開始";
+        ui.micButton.setAttribute("aria-pressed", "false");
+      }
+      setAudioError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (ui.micButton) ui.micButton.disabled = false;
+      micPending = false;
+    }
+  }
+
+  function stopMicrophoneFromUi() {
+    audioEngine.stopMic();
+    micOn = false;
+    if (ui.micButton) {
+      ui.micButton.textContent = "マイク開始";
+      ui.micButton.setAttribute("aria-pressed", "false");
+    }
+  }
+
+  async function startFaceTrackingFromUi() {
+    if (!faceTracker) faceTracker = createFaceTracker(applyFaceTrackingPose);
+    if (faceTracker.isRunning()) return;
+    setRangePreviewDirection(null);
+    if (ui.faceTrackButton) ui.faceTrackButton.disabled = true;
+    setFaceTrackStatus("顔トラッキング: 起動中...");
+    try {
+      await faceTracker.start();
+      if (ui.faceTrackButton) {
+        ui.faceTrackButton.textContent = "顔トラッキング停止";
+        ui.faceTrackButton.setAttribute("aria-pressed", "true");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setFaceTrackStatus(`顔トラッキング: ${message}`, true);
+      if (ui.faceTrackButton) {
+        ui.faceTrackButton.textContent = "顔トラッキング開始";
+        ui.faceTrackButton.setAttribute("aria-pressed", "false");
+      }
+    } finally {
+      if (ui.faceTrackButton) ui.faceTrackButton.disabled = false;
+    }
+  }
+
+  function stopFaceTrackingFromUi() {
+    if (!faceTracker) return;
+    faceTracker.stop();
+    if (ui.faceTrackButton) {
+      ui.faceTrackButton.textContent = "顔トラッキング開始";
+      ui.faceTrackButton.setAttribute("aria-pressed", "false");
+    }
+    setFaceTrackStatus("顔トラッキング: OFF（マウス操作）");
+  }
+
   function rangePreviewTarget(direction) {
     switch (direction) {
       case "left":
@@ -6048,7 +8829,13 @@
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const image = new Image();
-      image.onload = () => resolve(image);
+      image.onload = () => {
+        if (!image.decode) {
+          resolve(image);
+          return;
+        }
+        image.decode().catch(() => {}).then(() => resolve(image));
+      };
       image.onerror = () => reject(new Error(`画像を読み込めません: ${src}`));
       image.src = encodeURI(src);
     });
@@ -6101,10 +8888,31 @@
     }
   }
 
+  function expressionKeyForMouth(mouth, eyesClosed = blinkClosed) {
+    const eye = eyesClosed ? "eyesClosed" : "eyesOpen";
+    const suffix = mouth === 2 ? "MouthOpen" : mouth === 1 ? "MouthHalf" : "MouthClosed";
+    return `${eye}${suffix}`;
+  }
+
   function expressionKey() {
-    const eye = blinkClosed ? "eyesClosed" : "eyesOpen";
-    const mouth = mouthState === 2 ? "MouthOpen" : mouthState === 1 ? "MouthHalf" : "MouthClosed";
-    return `${eye}${mouth}`;
+    return expressionKeyForMouth(mouthState);
+  }
+
+  function mouthCrossfadeDurationMs() {
+    return clamp(state.mouthCrossfadeMs, 0, MOUTH_CROSSFADE_MAX_MS);
+  }
+
+  function resetMouthBlendState() {
+    mouthBlendFromState = mouthState;
+    mouthBlendToState = mouthState;
+    mouthBlendStartedAt = -10000;
+  }
+
+  function startMouthCrossfade(nextMouth, nowMs) {
+    if (nextMouth === mouthState) return;
+    mouthBlendFromState = mouthState;
+    mouthBlendToState = nextMouth;
+    mouthBlendStartedAt = nowMs;
   }
 
   function resizeCanvas() {
@@ -6314,7 +9122,7 @@
       antialias: false,
       depth: false,
       stencil: false,
-      premultipliedAlpha: false,
+      premultipliedAlpha: true,
       preserveDrawingBuffer: true,
     });
     if (!gl) return null;
@@ -6465,7 +9273,7 @@
       textureSet.add(texture);
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -6534,7 +9342,9 @@
         gl.vertexAttribPointer(texcoordLocation, 2, gl.FLOAT, false, 0, 0);
 
         gl.enable(gl.BLEND);
-        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        // テクスチャは乗算済みアルファでアップロードしているため、乗算済み用のブレンド式を使う。
+        // これでアルファ境界（透明ピクセルのRGB=黒）が線形補間で黒く滲む「黒フリンジ」を防ぐ。
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
         gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
       },
     };
@@ -7088,9 +9898,12 @@
     };
   }
 
-  // 髪のバネ物理を固定タイムステップで積分更新（★1 angleX 遅延 / ★2 波形慣性化 / ★3 伸びキャッシュ）。
+  // 髪のバネ物理を最大刻み幅つきサブステップで積分更新（★1 angleX 遅延 / ★2 波形慣性化 / ★3 伸びキャッシュ）。
   // tick 内の updateVoice 後・render 前に呼ぶ。delta が大きい（タブ復帰等）場合はサブステップ分割で発散防止。
-  const HAIR_FIXED_DT = 1 / 120;
+  const HAIR_MAX_SUBSTEP_DT = 1 / 120;
+  // ★6 連鎖化の強さ: 0=全バケットが頭を直接追う(従来) .. 1=完全に1段前のみを追う。
+  // 高いほど根元→毛先への伝播が強調され、むち状のしなりが出る。
+  const HAIR_CHAIN_FOLLOW = 0.68;
   const HAIR_ANGLE_LAG_X = 18;
   const HAIR_ANGLE_LAG_Y = 8;
   const HAIR_ANGLE_LAG_LIMIT_X = 18;
@@ -7167,18 +9980,28 @@
     const stiffness = options.stiffness ?? 1;
     const damping = options.damping ?? 1;
     const k1 = lerp(190, 55, t) * stiffness;
-    const c1 = lerp(26, 14, t) * damping;
+    // ★5 ハリ: 根元はほぼ臨界減衰(ζ≈0.9)のまま、毛先ほど減衰比を下げる(ζ≈0.5)。
+    // 頭が止まった後に毛先が一度だけ行き過ぎて戻る「ハリのある」挙動にする。
+    const c1 = lerp(24, 7.5, t) * damping;
     const k2 = lerp(260, 120, t) * stiffness;
-    const c2 = lerp(30, 20, t) * damping;
+    const c2 = lerp(29, 12, t) * damping;
     const kP = lerp(132, 34, t) * stiffness;
-    const cP = lerp(22, 11.5, t) * damping;
+    const cP = lerp(21, 6.5, t) * damping;
+
+    // ★6 連鎖化(follow-the-leader): wave は各段に専用ターゲットがあるため従来通り直接追従。
+    const prev = options.prev || null;
+    const chain = prev ? HAIR_CHAIN_FOLLOW : 0;
+    const axT = prev ? lerp(targets.axTarget, prev.anglePos, chain) : targets.axTarget;
+    const ayT = prev ? lerp(targets.ayTarget, prev.anglePosY, chain) : targets.ayTarget;
+    const hxT = prev ? lerp(targets.head.x, prev.headPosX, chain) : targets.head.x;
+    const hyT = prev ? lerp(targets.head.y, prev.headPosY, chain) : targets.head.y;
 
     for (let s = 0; s < targets.subSteps; s += 1) {
-      const a1 = -k1 * (bucket.anglePos - targets.axTarget) - c1 * bucket.angleVel;
+      const a1 = -k1 * (bucket.anglePos - axT) - c1 * bucket.angleVel;
       bucket.angleVel += a1 * targets.h;
       bucket.anglePos += bucket.angleVel * targets.h;
 
-      const a1y = -k1 * (bucket.anglePosY - targets.ayTarget) - c1 * bucket.angleVelY;
+      const a1y = -k1 * (bucket.anglePosY - ayT) - c1 * bucket.angleVelY;
       bucket.angleVelY += a1y * targets.h;
       bucket.anglePosY += bucket.angleVelY * targets.h;
 
@@ -7189,8 +10012,8 @@
       bucket.waveVelY += ay2 * targets.h;
       bucket.wavePosY += bucket.waveVelY * targets.h;
 
-      const apx = -kP * (bucket.headPosX - targets.head.x) - cP * bucket.headVelX;
-      const apy = -kP * (bucket.headPosY - targets.head.y) - cP * bucket.headVelY;
+      const apx = -kP * (bucket.headPosX - hxT) - cP * bucket.headVelX;
+      const apy = -kP * (bucket.headPosY - hyT) - cP * bucket.headVelY;
       bucket.headVelX += apx * targets.h;
       bucket.headPosX += bucket.headVelX * targets.h;
       bucket.headVelY += apy * targets.h;
@@ -7209,7 +10032,7 @@
     const springAmt = state.hairSpring / 100; // ★1/★3/★4 の強度スケール（hairWarp の揺れ強度とは別調整）。※ループ変数 spring と衝突しないよう springAmt と命名
     const head = computeHeadOffset(); // 頭の移動成分。位置バネ(★4)のターゲット。
 
-    const subSteps = Math.max(1, Math.ceil(delta / HAIR_FIXED_DT));
+    const subSteps = Math.max(1, Math.ceil(delta / HAIR_MAX_SUBSTEP_DT));
     const h = delta / subSteps;
     const targets = { axTarget, ayTarget, head, subSteps, h };
 
@@ -7222,7 +10045,10 @@
 
         // ★3 伸び: バネ速度方向に毛先を引き伸ばす。速度[unit/s] × (springAmt*0.06 ≒ 1フレーム相当) × 毛先重み(t^2)。
         // 0.06 は現行サンプルで伸びすぎず遅れ感が残る上限として固定。大きな変更時は髪束テンプレートと合わせて再調整する。
-        integrateHairSpringBucket(b, t, wave, targets, { stretchScale: springAmt * 0.06 });
+        integrateHairSpringBucket(b, t, wave, targets, {
+          stretchScale: springAmt * 0.06,
+          prev: i > 0 ? spring.buckets[i - 1] : null,
+        });
       }
     }
 
@@ -7239,6 +10065,7 @@
           stiffness,
           damping,
           stretchScale: springAmt * 0.06 * (def.swing || 1),
+          prev: i > 0 ? spring.buckets[i - 1] : null,
         });
       }
     }
@@ -7435,8 +10262,32 @@
       p.y = lerp(p.y, root.y, crownLock * (layer === "front" ? lerp(0.72, 0.76, followAmount) : 0.72));
     }
     const rootMotionDampen = layer === "front" ? 1 - crownLock * 0.85 * frontHairRootFollowAmount() : 1;
-    p.x += shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + nx * edge * ax * (layer === "front" ? 2.2 : -3.0) * hair * bundleMotion.edgeScale * rootMotionDampen;
-    p.y += shiftY + s.stretchY * bundleMotion.motionScale + tipDelayY + lagY + velocityLagY; // ★1-Y + ★3 + ★4 + 速度慣性
+    const edgeShiftX = nx * edge * ax * (layer === "front" ? 2.2 : -3.0) * hair * bundleMotion.edgeScale * rootMotionDampen;
+    const motionDX = shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + edgeShiftX;
+    const motionDY = shiftY + s.stretchY * bundleMotion.motionScale + tipDelayY + lagY + velocityLagY;
+
+    // ★7 円弧補正: 横変位 dx に対し根元支点の振り子として y を dx^2/(2L) 持ち上げる（長さ保存の弧）。
+    const metrics = currentFaceRigMetrics();
+    const swingLen = Math.max(90, metrics.radiusY * (layer === "front" ? 0.85 : 1.35) * Math.max(activeMask, 0.2));
+    const arcLift = clamp((motionDX * motionDX) / (2 * swingLen), 0, 30) * activeMask;
+
+    // ★8 速度スプレイ: 頭の移動・回転速度に応じて毛先を頭頂から放射方向へ開く。
+    const headSpeed = Math.hypot(s.headVelX, s.headVelY * 0.7) * 0.012 + Math.abs(s.angleVel) * 1.1;
+    const splayAmount = clamp(headSpeed, 0, 1.6) * activeMask * activeMask * springAmt * (layer === "front" ? 7 : 10);
+    let splayX = 0;
+    let splayY = 0;
+    if (splayAmount > 0.01) {
+      const rdx = x - metrics.center.x;
+      const rdy = y - metrics.topY;
+      const rlen = Math.hypot(rdx, rdy);
+      if (rlen > 1) {
+        splayX = (rdx / rlen) * splayAmount;
+        splayY = (rdy / rlen) * splayAmount * 0.55;
+      }
+    }
+
+    p.x += motionDX + splayX;
+    p.y += motionDY - arcLift + splayY; // ★1-Y + ★3 + ★4 + 速度慣性 + ★7 + ★8
     return p;
   }
 
@@ -7617,7 +10468,7 @@
     drawMeshCroppedImage(frontHairShadowReceiverCtx, images.backHair, (x, y) => hairWarpPoint(x, y, "back"), 14, 10);
     drawItemLayers(frontHairShadowReceiverCtx, "faceBack");
     const faceSpec = currentFaceMeshSpec();
-    drawMeshCroppedImage(frontHairShadowReceiverCtx, images[expressionKey()], faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+    drawMouthBlendedExpression(frontHairShadowReceiverCtx, faceSpec);
     drawItemLayers(frontHairShadowReceiverCtx, "faceFront");
   }
 
@@ -7656,7 +10507,7 @@
   function drawFaceAndHighlightLayer() {
     clearCharacterCanvas();
     const faceSpec = currentFaceMeshSpec();
-    drawMeshCroppedImage(charCtx, images[expressionKey()], faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+    drawMouthBlendedExpression(charCtx, faceSpec);
 
     // 目ハイライト(D): 各目中心基準でぷるぷるスケール、前髪の下、まばたき連動
     if (state.highlightEnabled) {
@@ -7681,6 +10532,39 @@
     }
 
     drawCharacterCanvasToStage();
+  }
+
+  function drawMouthBlendedExpression(targetCtx, faceSpec) {
+    const durationMs = mouthCrossfadeDurationMs();
+    if (mouthBlendFromState === mouthBlendToState || durationMs <= 0) {
+      drawMeshCroppedImage(targetCtx, images[expressionKey()], faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+      return;
+    }
+
+    const blendT = clamp(((lastTimestamp || performance.now()) - mouthBlendStartedAt) / durationMs, 0, 1);
+    if (blendT >= 1) {
+      drawMeshCroppedImage(targetCtx, images[expressionKey()], faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+      return;
+    }
+
+    const fromImage = images[expressionKeyForMouth(mouthBlendFromState)];
+    const toImage = images[expressionKeyForMouth(mouthBlendToState)];
+    if (!fromImage || !toImage) {
+      drawMeshCroppedImage(targetCtx, images[expressionKey()], faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+      return;
+    }
+
+    const prevAlpha = targetCtx.globalAlpha;
+    try {
+      // from画像を不透明のまま敷き、to画像だけをフェードインする。
+      // 表情PNGは口以外が同一前提なので、顔全体の不透明度を落とさず口領域だけを滑らかにつなぐ。
+      targetCtx.globalAlpha = prevAlpha;
+      drawMeshCroppedImage(targetCtx, fromImage, faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+      targetCtx.globalAlpha = prevAlpha * blendT;
+      drawMeshCroppedImage(targetCtx, toImage, faceSpec.warpFn, faceSpec.cols, faceSpec.rows);
+    } finally {
+      targetCtx.globalAlpha = prevAlpha;
+    }
   }
 
   function drawFrontHairLayer() {
@@ -8413,13 +11297,18 @@
 
   function drawCharacterWizardOverlay() {
     if (!characterWizard?.active) return;
-    if (characterWizardStepKey() === "hairBundles") return;
+    if (characterWizardHairGroup()) return;
     const draft = characterWizard.draft;
     if (!draft) return;
     const stepKey = characterWizardStepKey();
+    const currentStepFallbackPoint = stepKey !== "finish" && !characterWizardPointForStep(stepKey)
+      ? characterWizardCurrentPointForStep(stepKey)
+      : null;
     ctx.save();
-    const face = charPointToStage(draft.faceCenter);
-    const neck = charPointToStage(draft.neckPivot);
+    const facePoint = stepKey === "faceCenter" && currentStepFallbackPoint ? currentStepFallbackPoint : draft.faceCenter;
+    const neckPoint = stepKey === "neckPivot" && currentStepFallbackPoint ? currentStepFallbackPoint : draft.neckPivot;
+    const face = charPointToStage(facePoint);
+    const neck = charPointToStage(neckPoint);
     if (face && neck) {
       ctx.setLineDash([7, 6]);
       ctx.lineWidth = 2.5;
@@ -8431,8 +11320,10 @@
       ctx.setLineDash([]);
     }
     const anchors = draft.faceAnchors || {};
-    const leftEye = charPointToStage(anchors.leftEye);
-    const rightEye = charPointToStage(anchors.rightEye);
+    const leftEyePoint = stepKey === "leftEye" && currentStepFallbackPoint ? currentStepFallbackPoint : anchors.leftEye;
+    const rightEyePoint = stepKey === "rightEye" && currentStepFallbackPoint ? currentStepFallbackPoint : anchors.rightEye;
+    const leftEye = charPointToStage(leftEyePoint);
+    const rightEye = charPointToStage(rightEyePoint);
     if (leftEye && rightEye) {
       ctx.setLineDash([5, 5]);
       ctx.lineWidth = 1.8;
@@ -8444,13 +11335,13 @@
       ctx.setLineDash([]);
     }
     const entries = [
-      ["faceCenter", draft.faceCenter],
-      ["leftEye", anchors.leftEye],
-      ["rightEye", anchors.rightEye],
-      ["nose", anchors.nose],
-      ["mouth", anchors.mouth],
-      ["chin", anchors.chin],
-      ["neckPivot", draft.neckPivot],
+      ["faceCenter", facePoint],
+      ["leftEye", leftEyePoint],
+      ["rightEye", rightEyePoint],
+      ["nose", stepKey === "nose" && currentStepFallbackPoint ? currentStepFallbackPoint : anchors.nose],
+      ["mouth", stepKey === "mouth" && currentStepFallbackPoint ? currentStepFallbackPoint : anchors.mouth],
+      ["chin", stepKey === "chin" && currentStepFallbackPoint ? currentStepFallbackPoint : anchors.chin],
+      ["neckPivot", neckPoint],
     ];
     for (const [key, point] of entries) {
       const def = CHARACTER_WIZARD_STEP_DEFS[key];
@@ -8459,7 +11350,7 @@
     }
     if (stepKey !== "finish") {
       const def = characterWizardStepDef();
-      const p = characterWizardPointForStep(stepKey);
+      const p = characterWizardDisplayPointForStep(stepKey);
       if (p) {
         const stagePoint = charPointToStage(p);
         if (stagePoint) {
@@ -8601,7 +11492,7 @@
   function handleCharacterWizardPointerDown(event) {
     if (!characterWizard?.active) return false;
     const stepKey = characterWizardStepKey();
-    if (stepKey === "hairBundles" || stepKey === "finish") return false;
+    if (characterWizardHairGroup(stepKey) || stepKey === "finish") return false;
     const charPoint = stagePointToChar({ x: event.clientX, y: event.clientY });
     if (!charPoint) {
       setCharacterWizardStatus("キャラの上をクリックして点を置いてください。");
@@ -9056,6 +11947,7 @@
       ready: false,
       calibrated: false,
       calibrating: false,
+      delegate: "",
       baseYaw: 0,
       basePitch: 0,
       calibYawSum: 0,
@@ -9064,6 +11956,7 @@
       yaw: 0,
       pitch: 0,
       lastVideoTime: -1,
+      lastDetectAttemptAt: 0,
       lastDetectAt: 0,
       lastSeenAt: 0,
       lastNoFaceStatusAt: 0,
@@ -9107,16 +12000,28 @@
 
     async function loadLandmarker() {
       if (st.landmarker) return;
-      setFaceTrackStatus("顔トラッキング: MediaPipeを読み込み中...");
-      try {
-        st.landmarker = await createLandmarker("GPU");
-      } catch (gpuError) {
-        console.warn("MediaPipe GPU初期化に失敗したためCPUへ切り替えます。", gpuError);
+      setFaceTrackStatus(`顔トラッキング: MediaPipe(${FACE_TRACKING_PREFERRED_DELEGATE})を読み込み中...`);
+      if (FACE_TRACKING_PREFERRED_DELEGATE === "GPU") {
+        try {
+          st.landmarker = await createLandmarker("GPU");
+          st.delegate = "GPU";
+        } catch (gpuError) {
+          console.warn("MediaPipe GPU初期化に失敗したためCPUへ切り替えます。", gpuError);
+          try {
+            st.landmarker = await createLandmarker("CPU");
+            st.delegate = "CPU";
+          } catch (cpuError) {
+            console.warn("MediaPipe CPU初期化にも失敗しました。", cpuError);
+            throw new Error("MediaPipeを読み込めませんでした。vendor/mediapipe の同梱ファイルが存在するか確認してください。");
+          }
+        }
+      } else {
         try {
           st.landmarker = await createLandmarker("CPU");
+          st.delegate = "CPU";
         } catch (cpuError) {
-          console.warn("MediaPipe CPU初期化にも失敗しました。", cpuError);
-          throw new Error("MediaPipeを読み込めませんでした。ネットワーク接続またはCDNへのアクセスを確認してください。");
+          console.warn("MediaPipe CPU初期化に失敗しました。", cpuError);
+          throw new Error("MediaPipeを読み込めませんでした。vendor/mediapipe の同梱ファイルが存在するか確認してください。");
         }
       }
       st.ready = true;
@@ -9174,10 +12079,13 @@
       st.raf = requestAnimationFrame(detectLoop);
       if (!st.ready || !st.landmarker || !st.video) return;
       if (st.video.readyState < 2 || st.video.videoWidth === 0) return;
-      if (st.video.currentTime === st.lastVideoTime) return;
-      st.lastVideoTime = st.video.currentTime;
-
       const now = performance.now();
+      const videoTime = st.video.currentTime;
+      if (videoTime === st.lastVideoTime) return;
+      if (st.lastDetectAttemptAt && now - st.lastDetectAttemptAt < FACE_TRACKING_DETECT_INTERVAL_MS) return;
+      st.lastVideoTime = videoTime;
+      st.lastDetectAttemptAt = now;
+
       let result = null;
       try {
         result = st.landmarker.detectForVideo(st.video, now);
@@ -9247,6 +12155,8 @@
         await loadLandmarker();
         st.running = true;
         st.lastDetectAt = 0;
+        st.lastDetectAttemptAt = 0;
+        st.lastVideoTime = -1;
         st.detectErrorCount = 0;
         st.lastSeenAt = performance.now();
         requestCalibration();
@@ -9262,7 +12172,10 @@
       st.ready = false;
       st.calibrated = false;
       st.calibrating = false;
+      st.delegate = "";
       st.lastDetectAt = 0;
+      st.lastDetectAttemptAt = 0;
+      st.lastVideoTime = -1;
       st.detectErrorCount = 0;
       if (st.raf) cancelAnimationFrame(st.raf);
       st.raf = null;
@@ -9406,117 +12319,183 @@
     return state.demoTalk ? demoLevel(animationSeconds) : audioEngine.level() * (state.micGain / 100);
   }
 
-  function updateVoiceFromRaw(raw, nowMs) {
+  function mouthResponseConfig() {
+    const half = Math.min(state.mouthHalf, state.mouthFull - 1) / 100;
+    const full = Math.max(state.mouthFull, state.mouthHalf + 1) / 100;
+    const mouthFloor = Math.max(0.004, half * 0.45);
+    const range = Math.max(0.01, full - mouthFloor);
+    return { mouthFloor, range };
+  }
+
+  function mouthTargetForVoiceLevel(level) {
+    const { mouthFloor, range } = mouthResponseConfig();
+    return clamp((level - mouthFloor) / range, 0, 1);
+  }
+
+  function mouthThresholdLevels() {
+    const { mouthFloor, range } = mouthResponseConfig();
+    return {
+      halfOpen: mouthFloor + range * 0.22,
+      fullOpen: mouthFloor + range * 0.78,
+    };
+  }
+
+  function meterPercentForVoiceLevel(level) {
+    return clamp(level / AUDIO_METER_MAX_LEVEL, 0, 1) * 100;
+  }
+
+  function updateAudioMeterVisuals(level = voiceLevel) {
+    if (ui.meterFill) ui.meterFill.style.width = `${meterPercentForVoiceLevel(level)}%`;
+
+    const thresholds = mouthThresholdLevels();
+    if (ui.meterHalfLine) ui.meterHalfLine.style.left = `${meterPercentForVoiceLevel(thresholds.halfOpen)}%`;
+    if (ui.meterFullLine) ui.meterFullLine.style.left = `${meterPercentForVoiceLevel(thresholds.fullOpen)}%`;
+  }
+
+  function updateVoiceFromRaw(raw, nowMs, delta = 1 / 60) {
     lastVoiceRaw = raw;
-    const attack = 0.42;
-    const release = clamp(state.mouthRelease / 100, 0.04, 0.45);
+    const attack = frameIndependentLerpFactor(0.42, delta);
+    const release60 = clamp(state.mouthRelease / 100, 0.04, 0.45);
+    const release = frameIndependentLerpFactor(release60, delta);
     const k = raw > voicePeak ? attack : release;
     voicePeak = lerp(voicePeak, raw, k);
     voiceLevel = clamp(voicePeak, 0, 1);
 
-    const half = Math.min(state.mouthHalf, state.mouthFull - 1) / 100;
-    const full = Math.max(state.mouthFull, state.mouthHalf + 1) / 100;
-    const mouthFloor = Math.max(0.004, half * 0.45);
-    const mouthTarget = clamp((voiceLevel - mouthFloor) / Math.max(0.01, full - mouthFloor), 0, 1);
+    const mouthTarget = mouthTargetForVoiceLevel(voiceLevel);
     const previousMouthMotionLevel = mouthMotionLevel;
     // 口PNGの開閉まで遅くしすぎないよう、顎ぷに用の内部強度だけ少し遅らせる。
-    const mouthFollow = mouthTarget > mouthMotionLevel ? 0.55 : clamp(0.1 + release * 0.35, 0.1, 0.26);
+    const mouthFollow60 = mouthTarget > mouthMotionLevel ? 0.55 : clamp(0.1 + release60 * 0.35, 0.1, 0.26);
+    const mouthFollow = frameIndependentLerpFactor(mouthFollow60, delta);
     mouthMotionLevel = lerp(mouthMotionLevel, mouthTarget, mouthFollow);
     const openingKick = Math.max(0, mouthMotionLevel - previousMouthMotionLevel);
     const puniTarget = Math.pow(mouthMotionLevel, 1.35);
-    const puniFollow = puniTarget > jawPuniLevel ? 0.34 : clamp(release * 0.36, 0.018, 0.16);
+    const puniFollow60 = puniTarget > jawPuniLevel ? 0.34 : clamp(release60 * 0.36, 0.018, 0.16);
+    const puniFollow = frameIndependentLerpFactor(puniFollow60, delta);
     jawPuniLevel = clamp(lerp(jawPuniLevel, puniTarget, puniFollow) + openingKick * 0.65, 0, 1.2);
 
     const mouthVisualLevel = mouthTarget;
     const nextMouth = mouthVisualLevel >= 0.78 ? 2 : mouthVisualLevel >= 0.22 ? 1 : 0;
+    startMouthCrossfade(nextMouth, nowMs);
     mouthState = nextMouth;
     maybeTriggerTalkStartBlink(nowMs, nextMouth);
     previousMouthState = nextMouth;
 
-    if (ui.meterFill) ui.meterFill.style.width = `${clamp(voiceLevel / 0.45, 0, 1) * 100}%`;
+    updateAudioMeterVisuals(voiceLevel);
     if (ui.mouthReadout) ui.mouthReadout.textContent = ["とじ", "はんびらき", "ぜんかい"][mouthState];
     if (ui.angleReadout) {
       ui.angleReadout.textContent = `${Math.round(state.angleX * 100)}, ${Math.round(state.angleY * 100)}`;
     }
   }
 
-  function updateVoice(nowMs) {
+  function updateVoice(nowMs, delta = 1 / 60) {
     const raw = OBS_MODE ? externalVoiceLevel(nowMs) : currentRawVoiceLevel();
-    updateVoiceFromRaw(raw, nowMs);
+    updateVoiceFromRaw(raw, nowMs, delta);
+  }
+
+  function requestMainAnimationFrame() {
+    if (mainAnimationPaused || mainRafId !== null) return;
+    mainRafId = requestAnimationFrame((timestamp) => {
+      mainRafId = null;
+      tick(timestamp);
+    });
+  }
+
+  function cancelMainAnimationFrame() {
+    if (mainRafId !== null) {
+      cancelAnimationFrame(mainRafId);
+      mainRafId = null;
+    }
+  }
+
+  function pauseMainAnimationLoop() {
+    mainAnimationPaused = true;
+    cancelMainAnimationFrame();
+  }
+
+  function resumeMainAnimationLoop() {
+    mainAnimationPaused = false;
+    lastTimestamp = 0;
+    requestMainAnimationFrame();
   }
 
   function tick(timestamp) {
-    const obsFrameInterval = OBS_MODE ? 1000 / currentObsRenderFps() : 0;
-    const obsFrameSkipThreshold = Math.max(0, obsFrameInterval - 8);
-    if (OBS_MODE && obsLastFrameAt && timestamp - obsLastFrameAt < obsFrameSkipThreshold) {
-      requestAnimationFrame(tick);
-      return;
-    }
-    if (OBS_MODE) obsLastFrameAt = timestamp;
-    if (!lastTimestamp) lastTimestamp = timestamp;
-    const delta = Math.max(0, Math.min(0.05, (timestamp - lastTimestamp) / 1000));
-    lastTimestamp = timestamp;
-    motionFrameId += 1;
-
-    const setupActive = setupModeActive();
-    if (setupActive || state.rangePreviewDirection) {
-      if (setupActive) {
-        state.targetX = 0;
-        state.targetY = 0;
-        state.angleX = 0;
-        state.angleY = 0;
-      } else {
-        applyRangePreviewTarget(state.rangePreviewDirection);
+    try {
+      const obsFrameInterval = OBS_MODE ? 1000 / currentObsRenderFps() : 0;
+      const obsFrameSkipThreshold = Math.max(0, obsFrameInterval - 8);
+      if (OBS_MODE && obsLastFrameAt && timestamp - obsLastFrameAt < obsFrameSkipThreshold) {
+        return;
       }
-      blinkClosed = false;
-      mouthState = 0;
-      voiceLevel = 0;
-      voicePeak = 0;
-      lastVoiceRaw = 0;
-      mouthMotionLevel = 0;
-      jawPuniLevel = 0;
-      highlightPulseLeftX = 1;
-      highlightPulseLeftY = 1;
-      highlightPulseRightX = 1;
-      highlightPulseRightY = 1;
-      highlightPulseLeftTargetX = 1;
-      highlightPulseLeftTargetY = 1;
-      highlightPulseRightTargetX = 1;
-      highlightPulseRightTargetY = 1;
-      highlightGyroX = 0;
-      highlightGyroY = 0;
-      highlightGyroLagX = 0;
-      highlightGyroLagY = 0;
-      if (ui.meterFill) ui.meterFill.style.width = "0%";
-      if (ui.mouthReadout) ui.mouthReadout.textContent = "とじ";
-      if (ui.angleReadout) ui.angleReadout.textContent = `${Math.round(state.angleX * 100)}, ${Math.round(state.angleY * 100)}`;
+      if (OBS_MODE) obsLastFrameAt = timestamp;
+      if (!lastTimestamp) lastTimestamp = timestamp;
+      const delta = Math.max(0, Math.min(0.05, (timestamp - lastTimestamp) / 1000));
+      lastTimestamp = timestamp;
+      motionFrameId += 1;
+
+      const setupActive = setupModeActive();
+      if (setupActive || state.rangePreviewDirection) {
+        if (setupActive) {
+          state.targetX = 0;
+          state.targetY = 0;
+          state.angleX = 0;
+          state.angleY = 0;
+        } else {
+          applyRangePreviewTarget(state.rangePreviewDirection);
+        }
+        blinkClosed = false;
+        mouthState = 0;
+        resetMouthBlendState();
+        voiceLevel = 0;
+        voicePeak = 0;
+        lastVoiceRaw = 0;
+        mouthMotionLevel = 0;
+        jawPuniLevel = 0;
+        highlightPulseLeftX = 1;
+        highlightPulseLeftY = 1;
+        highlightPulseRightX = 1;
+        highlightPulseRightY = 1;
+        highlightPulseLeftTargetX = 1;
+        highlightPulseLeftTargetY = 1;
+        highlightPulseRightTargetX = 1;
+        highlightPulseRightTargetY = 1;
+        highlightGyroX = 0;
+        highlightGyroY = 0;
+        highlightGyroLagX = 0;
+        highlightGyroLagY = 0;
+        updateAudioMeterVisuals(0);
+        if (ui.mouthReadout) ui.mouthReadout.textContent = "とじ";
+        if (ui.angleReadout) ui.angleReadout.textContent = `${Math.round(state.angleX * 100)}, ${Math.round(state.angleY * 100)}`;
+        render();
+        return;
+      }
+
+      animationSeconds += delta;
+
+      if (OBS_MODE) {
+        applyObsExternalTarget(timestamp);
+      } else {
+        updateIdleMotionTarget(timestamp);
+      }
+      if (state.editMode) {
+        setEditPreviewFromKey();
+      } else {
+        const follow60 = clamp(state.followSpeed / 100, 0.02, 0.5);
+        const follow = frameIndependentLerpFactor(follow60, delta);
+        state.angleX += (state.targetX - state.angleX) * follow;
+        state.angleY += (state.targetY - state.angleY) * follow;
+      }
+      maybeTriggerPoseSettleBlink(timestamp, delta);
+      updateVoice(timestamp, delta);
+      publishObsInput(timestamp);
+      advanceBlinkEvent(timestamp);
+      updateHairPhysics(delta);
+      updateHighlightPulse(delta);
       render();
-      requestAnimationFrame(tick);
-      return;
+    } catch (error) {
+      console.error("[tick] animation loop error:", error);
+      setStatus("error");
+    } finally {
+      requestMainAnimationFrame();
     }
-
-    animationSeconds += delta;
-
-    if (OBS_MODE) {
-      applyObsExternalTarget(timestamp);
-    } else {
-      updateIdleMotionTarget(timestamp);
-    }
-    if (state.editMode) {
-      setEditPreviewFromKey();
-    } else {
-      const follow = clamp(state.followSpeed / 100, 0.02, 0.5);
-      state.angleX += (state.targetX - state.angleX) * follow;
-      state.angleY += (state.targetY - state.angleY) * follow;
-    }
-    maybeTriggerPoseSettleBlink(timestamp, delta);
-    updateVoice(timestamp);
-    publishObsInput(timestamp);
-    advanceBlinkEvent(timestamp);
-    updateHairPhysics(delta);
-    updateHighlightPulse(delta);
-    render();
-    requestAnimationFrame(tick);
   }
 
   function randomBetween(min, max) {
@@ -9678,17 +12657,19 @@
     resetBlinkEventState({ keepSchedule: true });
   }
 
-  function bindRange(id, key, suffix = "%") {
+  function bindRange(id, key, suffix = "%", afterUpdate = null) {
     const input = document.querySelector(`#${id}`);
     const output = input?.closest(".control-row")?.querySelector("output");
     if (!input) return;
     if (Number.isFinite(Number(state[key]))) {
       input.value = String(state[key]);
     }
-    const update = () => {
+    const update = (event = null) => {
       state[key] = Number(input.value);
       if (output) output.textContent = `${input.value}${suffix}`;
+      if (key === "mouthHalf" || key === "mouthFull") updateAudioMeterVisuals(voiceLevel);
       updateChangedBadgeForControl(key);
+      if (afterUpdate && event) afterUpdate();
     };
     input.addEventListener("input", update);
     update();
@@ -9879,6 +12860,7 @@
     updateMouseFollowButton();
     updateRangePreviewButtons();
     updateItemLayerUi();
+    updateAudioMeterVisuals(voiceLevel);
     updateAllChangedBadges();
   }
 
@@ -9893,11 +12875,14 @@
 
   function resetFrameTimingOnResume() {
     if (document.visibilityState === "visible") {
-      lastTimestamp = 0;
+      resumeMainAnimationLoop();
+    } else {
+      pauseMainAnimationLoop();
     }
   }
 
   function shutdownResources() {
+    pauseMainAnimationLoop();
     closeObsEventSource();
     clearTimeout(blinkTimer);
     audioEngine.close().catch(() => {});
@@ -9916,16 +12901,24 @@
   }
 
   function restoreResourcesAfterPageShow(event) {
-    lastTimestamp = 0;
+    resumeMainAnimationLoop();
     if (event.persisted) {
       resetMeshRendererAfterAvatarImageChange();
     }
     if (OBS_MODE) connectObsEventSource();
+    const shouldRestoreMic = restoreMicAfterPageShow;
+    const shouldRestoreFaceTrack = restoreFaceTrackAfterPageShow;
+    restoreMicAfterPageShow = false;
+    restoreFaceTrackAfterPageShow = false;
+    if (shouldRestoreMic) void startMicrophoneFromUi();
+    if (shouldRestoreFaceTrack) void startFaceTrackingFromUi();
   }
 
   function handlePageHide() {
     // pagehideではブラウザが非同期IndexedDB処理を最後まで待つ保証がない。
     // それでも未保存設定を即時flushへ渡し、画像/音声/カメラなどのリソース解放は必ず実行する。
+    restoreMicAfterPageShow = micOn || micPending;
+    restoreFaceTrackAfterPageShow = isFaceTrackingActive();
     void flushActiveCharacterAutosave({ reason: "pagehide", forceSettings: true });
     shutdownResources();
   }
@@ -9976,7 +12969,15 @@
       ui.addCharacterFileInput.value = "";
     });
     ui.characterList?.addEventListener("click", (event) => {
-      const button = event.target instanceof Element ? event.target.closest("button") : null;
+      const target = event.target instanceof Element ? event.target : null;
+      const deleteButton = target?.closest("button[data-character-delete-id]");
+      if (deleteButton) {
+        event.preventDefault();
+        event.stopPropagation();
+        void deleteCharacterProfile(deleteButton.dataset.characterDeleteId);
+        return;
+      }
+      const button = target?.closest("button");
       if (!button) return;
       if (button.dataset.characterId) {
         void switchCharacterProfile(button.dataset.characterId);
@@ -10228,6 +13229,7 @@
     bindRange("mouthHalf", "mouthHalf");
     bindRange("mouthFull", "mouthFull");
     bindRange("mouthRelease", "mouthRelease");
+    bindRange("mouthCrossfadeMs", "mouthCrossfadeMs", "ms");
     bindRange("avatarSize", "avatarSize");
     bindRange("breathStrength", "breathStrength");
     bindRange("rollStrength", "rollStrength");
@@ -10239,7 +13241,12 @@
     bindRange("subHighlightSize", "subHighlightSize", "px");
     bindRange("subHighlightAspect", "subHighlightAspect");
     bindRange("subHighlightFilmWobble", "subHighlightFilmWobble");
-    bindRange("hairTintLightness", "hairTintLightness");
+    bindRange("hairTintLightness", "hairTintLightness", "%", () => {
+      state.hairTintEnabled = true;
+      updateHairColorUi();
+      hairTintCache.clear();
+      updateChangedBadgeForControl("hairTintEnabled");
+    });
     bindRange("tearLensStrength", "tearLensStrength");
     bindRange("tearLensRadiusX", "tearLensRadiusX", "px");
     bindRange("tearLensRadiusY", "tearLensRadiusY", "px");
@@ -10410,14 +13417,6 @@
       updateChangedBadgeForControl("hairTintLightness");
     });
 
-    document.querySelector("#hairTintLightness")?.addEventListener("input", () => {
-      state.hairTintEnabled = true;
-      updateHairColorUi();
-      hairTintCache.clear();
-      updateChangedBadgeForControl("hairTintEnabled");
-      updateChangedBadgeForControl("hairTintLightness");
-    });
-
     ui.hairColorReset?.addEventListener("click", () => {
       state.hairTintEnabled = false;
       state.hairColor = "#2C292C";
@@ -10551,59 +13550,18 @@
     });
 
     ui.micButton?.addEventListener("click", async () => {
-      if (micPending) return;
-      micPending = true;
-      ui.micButton.disabled = true;
-      setAudioError("");
-      try {
-        if (micOn) {
-          audioEngine.stopMic();
-          micOn = false;
-          ui.micButton.textContent = "マイク開始";
-          ui.micButton.setAttribute("aria-pressed", "false");
-          return;
-        }
-        await audioEngine.startMic();
-        micOn = true;
-        ui.micButton.textContent = "マイク停止";
-        ui.micButton.setAttribute("aria-pressed", "true");
-      } catch (error) {
-        audioEngine.stopMic();
-        micOn = false;
-        ui.micButton.textContent = "マイク開始";
-        ui.micButton.setAttribute("aria-pressed", "false");
-        setAudioError(error instanceof Error ? error.message : String(error));
-      } finally {
-        ui.micButton.disabled = false;
-        micPending = false;
-      }
+      if (micOn) stopMicrophoneFromUi();
+      else await startMicrophoneFromUi();
     });
 
     ui.faceTrackButton?.addEventListener("click", async () => {
       if (!faceTracker) faceTracker = createFaceTracker(applyFaceTrackingPose);
       if (faceTracker.isRunning()) {
-        faceTracker.stop();
-        ui.faceTrackButton.textContent = "顔トラッキング開始";
-        ui.faceTrackButton.setAttribute("aria-pressed", "false");
-        setFaceTrackStatus("顔トラッキング: OFF（マウス操作）");
+        stopFaceTrackingFromUi();
         return;
       }
 
-      setRangePreviewDirection(null);
-      ui.faceTrackButton.disabled = true;
-      setFaceTrackStatus("顔トラッキング: 起動中...");
-      try {
-        await faceTracker.start();
-        ui.faceTrackButton.textContent = "顔トラッキング停止";
-        ui.faceTrackButton.setAttribute("aria-pressed", "true");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        setFaceTrackStatus(`顔トラッキング: ${message}`, true);
-        ui.faceTrackButton.textContent = "顔トラッキング開始";
-        ui.faceTrackButton.setAttribute("aria-pressed", "false");
-      } finally {
-        ui.faceTrackButton.disabled = false;
-      }
+      await startFaceTrackingFromUi();
     });
 
     ui.faceCalibrateButton?.addEventListener("click", () => {
@@ -10725,6 +13683,7 @@
     bindCharacterProfileControls();
     bindDockControls();
     bindCharacterWizardControls();
+    bindDrawingAvatarControls();
     bindItemLayerControls();
     bindAdjustmentRangeControls();
     bindVisualSetupControls();
@@ -10760,5 +13719,5 @@
       console.error("loadAssets failed", error);
     });
   connectObsEventSource();
-  requestAnimationFrame(tick);
+  requestMainAnimationFrame();
 })();

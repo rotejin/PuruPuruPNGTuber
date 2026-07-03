@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'"
+  />
+  <title>お絵描きアバター単体版</title>
+  <link rel="stylesheet" href="./standalone-drawing-avatar.css" />
+</head>
+<body>
+  <main class="app">
+    <section class="preview">
+      <header class="header">
+        <div>
+          <p class="eyebrow">PuruPuru drawing module</p>
+          <h1>お絵描きアバター単体版</h1>
+        </div>
+        <p id="status" class="status">顔ベースから描き始めてください。</p>
+      </header>
+
+      <div class="toolbar">
+        <div class="tgroup" role="group" aria-label="ツール">
+          <button id="brush" class="button" aria-pressed="true" title="ブラシ（B）">ブラシ</button>
+          <button id="fill" class="button muted" aria-pressed="false" title="塗りつぶし（G）">塗りつぶし</button>
+          <button id="eraser" class="button muted" aria-pressed="false" title="消しゴム（E）">消しゴム</button>
+        </div>
+        <div class="sep"></div>
+        <label class="slider" title="ブラシの太さ（[ で細く、] で太く）">太さ <input id="brushSize" type="range" min="2" max="160" value="14" /> <output>14px</output></label>
+        <label class="slider" title="フチのぼかし具合">柔らかさ <input id="softness" type="range" min="0" max="100" value="0" /> <output>0%</output></label>
+        <label class="slider" title="線のガタつきを抑えて滑らかにします">手ぶれ補正 <input id="stab" type="range" min="0" max="100" value="30" /> <output>30%</output></label>
+        <label class="check pressure" title="ペンタブレットの筆圧で太さが変わります"><input id="pressure" type="checkbox" checked /> 筆圧</label>
+        <div class="sep"></div>
+        <div class="tgroup" role="group" aria-label="取り消し">
+          <button id="undo" class="button" title="元に戻す（Ctrl+Z）">元に戻す</button>
+          <button id="redo" class="button muted" title="やり直し（Ctrl+Y）">やり直し</button>
+        </div>
+        <div class="sep"></div>
+        <div class="tgroup" role="group" aria-label="ズーム">
+          <button id="zoomOut" class="button icon" title="縮小（-）">−</button>
+          <button id="zoomLabel" class="button zoom-label" title="クリックで100%表示">100%</button>
+          <button id="zoomIn" class="button icon" title="拡大（+）">＋</button>
+          <button id="zoomFit" class="button muted" title="全体表示（0）">全体</button>
+        </div>
+      </div>
+
+      <div id="canvasWrap" class="canvas-wrap" data-mode="brush">
+        <canvas id="canvas" role="img" aria-label="描画キャンバス（1024×1536）"></canvas>
+        <canvas id="overlay" aria-hidden="true"></canvas>
+      </div>
+      <p class="hint">ホイール：ズーム ／ Space または中ボタンドラッグ：画面移動 ／ B・G・E：ツール切替 ／ [ ]：太さ</p>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>表情プレビュー <strong>クリックで切替</strong></h2>
+        <div id="expressions" class="exps"></div>
+        <p class="note">描きながら6表情を確認できます。クリックするとキャンバスの目・口がその組み合わせに切り替わります。</p>
+      </section>
+
+      <section class="panel">
+        <h2>描く対象 <strong id="activeName">顔ベース</strong></h2>
+        <div id="layers" class="layers"></div>
+        <button id="addItem" class="button wide">＋ アイテムレイヤーを追加</button>
+        <div class="grid">
+          <button id="importPng" class="button">PNG画像を追加</button>
+          <button id="removePng" class="button muted">選択PNGを削除</button>
+        </div>
+        <input id="pngFile" type="file" accept="image/png,.png" multiple hidden />
+        <div id="pngList" class="png-list" aria-label="このレイヤー内のPNG一覧"></div>
+        <div id="pngControls" class="box" hidden>
+          <p id="pngReadout" class="note png-readout">選択中のPNGを調整します。</p>
+          <label>左右 <input id="imgX" type="range" min="-1024" max="1024" value="0" /> <output>0px</output></label>
+          <label>上下 <input id="imgY" type="range" min="-1536" max="1536" value="0" /> <output>0px</output></label>
+          <label>大きさ <input id="imgScale" type="range" min="5" max="300" value="100" /> <output>100%</output></label>
+          <button id="centerPng" class="button muted wide">PNGを中央へ戻す</button>
+        </div>
+        <button id="clear" class="button danger wide">このレイヤーをクリア</button>
+        <label class="check"><input id="onion" type="checkbox" checked /> 選択外レイヤーを薄く表示</label>
+        <p class="note">👁は表示切替です。非表示でも書き出しには含まれます。</p>
+      </section>
+
+      <section class="panel">
+        <h2>色</h2>
+        <label class="color-row">色を選ぶ <input id="color" type="color" value="#3c3026" /></label>
+        <div id="swatches" class="swatches">
+          <button data-color="#3c3026" aria-pressed="true" aria-label="色スウォッチ 1: #3c3026"></button>
+          <button data-color="#f2c7a5" aria-pressed="false" aria-label="色スウォッチ 2: #f2c7a5"></button>
+          <button data-color="#e97777" aria-pressed="false" aria-label="色スウォッチ 3: #e97777"></button>
+          <button data-color="#3d8cff" aria-pressed="false" aria-label="色スウォッチ 4: #3d8cff"></button>
+          <button data-color="#2c292c" aria-pressed="false" aria-label="色スウォッチ 5: #2c292c"></button>
+          <button data-color="#ffffff" aria-pressed="false" aria-label="色スウォッチ 6: #ffffff"></button>
+          <button data-color="#8b6f62" aria-pressed="false" aria-label="色スウォッチ 7: #8b6f62"></button>
+          <button data-color="#d96c4f" aria-pressed="false" aria-label="色スウォッチ 8: #d96c4f"></button>
+        </div>
+        <p class="note">スウォッチを選んでから色を変えると、そのスウォッチが上書きされます。</p>
+      </section>
+
+      <section class="panel">
+        <h2>書き出し <strong>6表情PNG</strong></h2>
+        <p class="note">顔ベースは必須です。未描画の目・口差分は近い差分で代用します。</p>
+        <button id="finish" class="primary wide">完成PNGを生成</button>
+        <div class="grid">
+          <button id="saveProject" class="button">プロジェクト保存</button>
+          <button id="loadProject" class="button muted">プロジェクト読込</button>
+        </div>
+        <input id="projectFile" type="file" accept="application/json,.json" hidden />
+        <div id="outputs" class="outputs"></div>
+      </section>
+    </aside>
+  </main>
+  <script src="./standalone-drawing-avatar.js"></script>
+</body>
+</html>

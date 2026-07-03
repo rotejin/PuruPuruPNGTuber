@@ -129,7 +129,14 @@ function extractConst(name) {
 
 const definitions = [
   extractConst("MAX_JSON_SANITIZE_DEPTH"),
+  extractConst("MAX_JSON_KEYS_PER_OBJECT"),
+  extractConst("MAX_JSON_ARRAY_LENGTH"),
+  extractConst("MAX_JSON_STRING_LENGTH"),
+  extractConst("MAX_JSON_DATA_URL_STRING_LENGTH"),
+  extractConst("MAX_JSON_NODE_COUNT"),
   extractConst("FORBIDDEN_JSON_KEYS"),
+  extractConst("MAX_AVATAR_IMAGE_EDGE"),
+  extractConst("MAX_AVATAR_IMAGE_PIXELS"),
   extractConst("PNG_DATA_URL_PREFIX"),
   extractConst("PNG_BASE64_SIGNATURE"),
   extractConst("MAX_PURUPURU_PACKAGE_SIZE"),
@@ -160,11 +167,13 @@ const definitions = [
   extractFunction("function cloneJsonValue("),
   extractFunction("function pngU8ToBlob("),
   extractFunction("function assertPngU8("),
+  extractFunction("function pngU8Dimensions("),
+  extractFunction("function validateAvatarImageSize("),
   extractFunction("function avatarImageDimensions("),
   extractFunction("function validateAvatarImageDimensions("),
   `async function loadPngImageFromU8(u8, name = "PNG") {
-  assertPngU8(u8, name);
-  return { naturalWidth: 900, naturalHeight: 900, width: 900, height: 900 };
+  const size = validateAvatarImageSize(pngU8Dimensions(u8, name), name);
+  return { naturalWidth: size.w, naturalHeight: size.h, width: size.w, height: size.h };
 }` ,
   extractFunction("async function parsePuruPuruPackageBlob("),
 ].join("\n\n");
@@ -225,8 +234,15 @@ function jsonBytes(value) {
   return textToU8(JSON.stringify(value));
 }
 
-function tinyPngBytes() {
-  return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+function tinyPngBytes(width = 900, height = 900) {
+  const u8 = new Uint8Array(24);
+  u8.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  const view = new DataView(u8.buffer);
+  view.setUint32(8, 13, false);
+  u8.set([0x49, 0x48, 0x44, 0x52], 12);
+  view.setUint32(16, width, false);
+  view.setUint32(20, height, false);
+  return u8;
 }
 
 function minimalPackageBlob({ manifestPatch = {}, omitManifest = false, omitSettings = false } = {}) {
@@ -265,12 +281,30 @@ for (let i = 0; i < 40; i += 1) {
   cursor = cursor.next;
 }
 expectThrow(() => sanitizeImportedJsonValue(deep), /階層/);
+expectThrow(() => sanitizeImportedJsonValue(Array(MAX_JSON_ARRAY_LENGTH + 1).fill(0)), /配列/);
+const wide = {};
+for (let i = 0; i <= MAX_JSON_KEYS_PER_OBJECT; i += 1) {
+  wide["k" + i] = i;
+}
+expectThrow(() => sanitizeImportedJsonValue(wide), /項目数/);
+expectThrow(() => sanitizeImportedJsonValue("x".repeat(MAX_JSON_STRING_LENGTH + 1)), /文字列/);
+assert.equal(
+  sanitizeImportedJsonValue(PNG_DATA_URL_PREFIX + "A".repeat(MAX_JSON_STRING_LENGTH + 1)).length,
+  PNG_DATA_URL_PREFIX.length + MAX_JSON_STRING_LENGTH + 1
+);
+expectThrow(() => sanitizeImportedJsonValue(PNG_DATA_URL_PREFIX + "A".repeat(MAX_JSON_DATA_URL_STRING_LENGTH + 1)), /文字列/);
+const manyNodes = Array.from({ length: MAX_JSON_ARRAY_LENGTH }, () => Array.from({ length: 26 }, () => 0));
+expectThrow(() => sanitizeImportedJsonValue(manyNodes), /要素数/);
 
 const pngUrl = PNG_DATA_URL_PREFIX + PNG_BASE64_SIGNATURE + "AAAA";
 assert.equal(validatePngDataUrl(pngUrl, "PNG"), pngUrl);
 expectThrow(() => validatePngDataUrl("data:text/plain;base64,AAAA", "PNG"), /PNG/);
 expectThrow(() => validatePngDataUrl(PNG_DATA_URL_PREFIX + "AAAA", "PNG"), /PNG/);
 expectThrow(() => validatePngDataUrl(pngUrl, "PNG", 12), /大きすぎ/);
+assert.deepEqual(pngU8Dimensions(tinyPngBytes(320, 240), "PNG"), { w: 320, h: 240 });
+expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE + 1, h: 1 }, "PNG"), /大きすぎ/);
+expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE, h: MAX_AVATAR_IMAGE_EDGE + 1 }, "PNG"), /大きすぎ/);
+expectThrow(() => pngU8Dimensions(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "PNG"), /PNG/);
 
 assert.equal(crc32(textToU8("123456789")), 0xcbf43926);
 

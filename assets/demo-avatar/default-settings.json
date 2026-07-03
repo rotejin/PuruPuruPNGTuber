@@ -16,7 +16,7 @@
     "angleYDeform": 200,
     "hairVisible": true,
     "hairWarp": 120,
-    "hairSpring": 20,
+    "hairSpring": 40,
     "hairBundleStrength": 100,
     "frontHairShadowStrength": 60,
     "frontHairShadowDistance": 10,
@@ -63,7 +63,8 @@
     "micGain": 220,
     "mouthHalf": 8,
     "mouthFull": 22,
-    "mouthRelease": 18
+    "mouthRelease": 18,
+    "mouthCrossfadeMs": 0
   },
   "outputSettings": {
     "obsPreset": "standard"
@@ -1839,7 +1840,7 @@
       "angleYDeform": 200,
       "hairVisible": true,
       "hairWarp": 120,
-      "hairSpring": 20,
+      "hairSpring": 40,
       "hairBundleStrength": 100,
       "frontHairShadowStrength": 60,
       "frontHairShadowDistance": 10,
@@ -1886,7 +1887,8 @@
       "micGain": 220,
       "mouthHalf": 8,
       "mouthFull": 22,
-      "mouthRelease": 18
+      "mouthRelease": 18,
+      "mouthCrossfadeMs": 0
     }
   },
   "packageVersion": 1

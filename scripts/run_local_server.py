@@ -7,7 +7,7 @@ import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from functools import partial
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import errno
 import os
 import platform
@@ -22,10 +22,11 @@ FALLBACK_PORT_END = 8050
 TRUSTED_API_HOSTS = {"127.0.0.1", "localhost"}
 OBS_SNAPSHOT_MAX_BYTES = 24 * 1024 * 1024
 MAX_LOCAL_SERVER_THREADS = 64
+REQUEST_BODY_READ_TIMEOUT_SECONDS = 2.0
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; "
-    "connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com; "
+    "script-src 'self' 'wasm-unsafe-eval'; "
+    "connect-src 'self'; "
     "worker-src 'self' blob:; "
     "img-src 'self' data: blob:; "
     "style-src 'self'; "
@@ -54,8 +55,13 @@ class ObsHub:
 
     def wait_next(self, last_seq: int, timeout: float = 10.0) -> tuple[int, str, dict | None]:
         with self._condition:
-            if self._seq == last_seq:
-                self._condition.wait(timeout)
+            last_seq = min(last_seq, self._seq)
+            deadline = time.monotonic() + timeout
+            while self._seq == last_seq:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._condition.wait(remaining)
             if not self.latest_event:
                 return self._seq, "input", self.latest_input
             event_name, payload = self.latest_event
@@ -86,6 +92,14 @@ class ObsHub:
 
 
 OBS_HUB = ObsHub()
+
+
+def parse_nonnegative_int(value: str | None, default: int = 0) -> int:
+    try:
+        parsed = int(value or "")
+    except (TypeError, ValueError):
+        return default
+    return max(default, parsed)
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -160,7 +174,18 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
                 self.close_connection = True
                 self.discard_request_body(max_bytes)
             raise ValueError("invalid content length")
-        body = self.rfile.read(length)
+        old_timeout = self.connection.gettimeout()
+        self.connection.settimeout(REQUEST_BODY_READ_TIMEOUT_SECONDS)
+        try:
+            body = self.rfile.read(length)
+        except OSError as error:
+            self.close_connection = True
+            raise ValueError("request body read timeout") from error
+        finally:
+            self.connection.settimeout(old_timeout)
+        if len(body) != length:
+            self.close_connection = True
+            raise ValueError("incomplete request body")
         payload = json.loads(body.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("json body must be object")
@@ -203,7 +228,7 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def is_trusted_api_request(self) -> bool:
+    def is_trusted_api_client(self) -> bool:
         if header_hostname(self.headers.get("Host")) not in TRUSTED_API_HOSTS:
             return False
 
@@ -215,11 +240,22 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         if not origin and referer and url_hostname(referer) not in TRUSTED_API_HOSTS:
             return False
 
+        return True
+
+    def is_trusted_api_read_request(self) -> bool:
+        return self.is_trusted_api_client()
+
+    def is_trusted_api_request(self) -> bool:
+        if not self.is_trusted_api_client():
+            return False
+
         content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
         return content_type == "application/json"
 
     def is_allowed_path(self) -> bool:
         request_path = unquote(urlsplit(self.path).path)
+        if "\\" in request_path:
+            return False
         path = Path(request_path)
         if ".." in path.parts:
             return False
@@ -236,7 +272,9 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.end_headers()
 
-        last_seq = 0
+        query = parse_qs(urlsplit(self.path).query)
+        query_last_event_id = (query.get("lastEventId") or [""])[0]
+        last_seq = parse_nonnegative_int(self.headers.get("Last-Event-ID") or query_last_event_id)
         try:
             while True:
                 seq, event_name, payload = OBS_HUB.wait_next(last_seq, timeout=10.0)
@@ -258,6 +296,10 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         request_path = urlsplit(self.path).path
+        if request_path.startswith("/api/") and not self.is_trusted_api_read_request():
+            self.close_connection = True
+            self.send_json(403, {"ok": False})
+            return
         if request_path == "/api/obs/snapshot":
             self.send_json(200, OBS_HUB.latest_snapshot or {})
             return

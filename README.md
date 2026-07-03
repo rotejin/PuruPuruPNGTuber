@@ -103,7 +103,8 @@ ribbon.png    リボン
 - 表情差分 + 前髪 + 後ろ髪によるリッチな見た目
 - マイク音量またはデモによる口パク
 - 自動まばたき
-- マウス追従とカメラ顔トラッキング
+- マウス追従とカメラ顔トラッキング（既定はCPU・最大15fpsの安全設定）
+- PNG素材なしで作れるブラウザ内お絵描き新キャラ作成
 - 前髪・後ろ髪のぷるぷる揺れ
 - 顔向き、ハイライト、涙レンズ、影の調整
 - PNGアイテムの追加、前後関係、追従、ロック
@@ -119,7 +120,9 @@ ribbon.png    リボン
 - Google Chrome or Chromium recommended
 - Camera permission for face tracking
 - Microphone permission for microphone lip sync
-- Internet access for MediaPipe face tracking assets unless they are vendored in a future release
+- MediaPipe face tracking assets are vendored under `vendor/mediapipe/`
+
+Face tracking uses the CPU delegate by default and limits detection to 15fps to reduce long-running GPU memory risk. If you intentionally want to test the GPU delegate, append `?faceDelegate=gpu` or `?face-delegate=gpu` to the local URL.
 
 ### Windows
 
@@ -178,6 +181,7 @@ Bundled demo images, favicon, screenshots, thumbnails, and other visual assets a
 
 ```bash
 node --check app.js
+node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js
 node tests/js_runtime_checks.mjs
 python -m py_compile scripts/run_local_server.py
 python -m unittest tests.test_project_static
@@ -185,7 +189,7 @@ python -m unittest tests.test_project_static
 
 ## Privacy
 
-PuruPuru PNGTuber runs locally in your browser. Camera and microphone data are processed locally for the app's features. Face tracking loads MediaPipe assets from external CDNs at runtime unless those assets are vendored in a future release.
+PuruPuru PNGTuber runs locally in your browser. Camera and microphone data are processed locally for the app's features. Face tracking loads vendored MediaPipe assets from `vendor/mediapipe/` at runtime when you enable camera tracking. Face tracking defaults to the CPU delegate; GPU is opt-in via `?faceDelegate=gpu`.
 
 Camera-based face tracking is powered by Google MediaPipe Tasks Vision, licensed under Apache License 2.0. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 

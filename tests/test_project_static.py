@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from functools import partial
+from collections import Counter
 from http.client import HTTPConnection
 import json
 import re
@@ -383,11 +384,19 @@ class ProjectStaticTests(unittest.TestCase):
 
     def test_third_party_notices_cover_mediapipe(self) -> None:
         app = self.read_text("app.js")
+        html = self.read_text("index.html")
+        server = self.read_text("scripts/run_local_server.py")
         notices = self.read_text("THIRD_PARTY_NOTICES.md")
-        self.assertIn("@mediapipe/tasks-vision@0.10.35", app)
+        self.assertIn('const MEDIAPIPE_VENDOR_ROOT = new URL("vendor/mediapipe/", window.location.href)', app)
+        self.assertIn('const MEDIAPIPE_TASKS_VISION_VERSION = "0.10.35"', app)
         self.assertIn("@mediapipe/tasks-vision@0.10.35", notices)
-        self.assertIn("storage.googleapis.com/mediapipe-models", notices)
+        self.assertIn("vendor/mediapipe/tasks-vision/0.10.35/vision_bundle.mjs", notices)
+        self.assertIn("vendor/mediapipe/face_landmarker/float16/face_landmarker.task", notices)
         self.assertIn("Apache License 2.0", notices)
+        self.assertNotIn("https://cdn.jsdelivr.net", app)
+        self.assertNotIn("https://storage.googleapis.com", app)
+        self.assertNotIn("https://cdn.jsdelivr.net", html)
+        self.assertNotIn("https://storage.googleapis.com", server)
 
     def test_csp_matches_external_urls_and_server_header(self) -> None:
         app = self.read_text("app.js")
@@ -413,11 +422,16 @@ class ProjectStaticTests(unittest.TestCase):
     def test_server_security_and_obs_helpers_exist(self) -> None:
         server = self.read_text("scripts/run_local_server.py")
         self.assertIn('TRUSTED_API_HOSTS = {"127.0.0.1", "localhost"}', server)
+        self.assertIn("def is_trusted_api_client(self) -> bool:", server)
+        self.assertIn("def is_trusted_api_read_request(self) -> bool:", server)
         self.assertIn("def is_trusted_api_request(self) -> bool:", server)
         self.assertIn("class BoundedThreadingHTTPServer(ThreadingHTTPServer):", server)
         self.assertIn("daemon_threads = True", server)
         self.assertIn("MAX_LOCAL_SERVER_THREADS = 64", server)
+        self.assertIn("REQUEST_BODY_READ_TIMEOUT_SECONDS = 2.0", server)
         self.assertIn('content_type != "application/json"', server)
+        self.assertIn('if "\\\\" in request_path:', server)
+        self.assertIn("while self._seq == last_seq:", server)
         self.assertIn('request_path == "/api/obs/input"', server)
         self.assertIn('request_path == "/api/obs/snapshot"', server)
         self.assertIn('request_path == "/api/obs/config"', server)
@@ -480,6 +494,18 @@ class ProjectStaticTests(unittest.TestCase):
 
             response, _ = request("GET", "/%2e%2e/app.js")
             self.assertEqual(response.status, 404)
+
+            response, _ = request("GET", "/avatar%5Cbody.png")
+            self.assertEqual(response.status, 404)
+
+            response, _ = request("GET", "/api/obs/snapshot", headers={"Host": "evil.example"})
+            self.assertEqual(response.status, 403)
+
+            response, _ = request("GET", "/api/obs/config", headers={"Origin": "https://example.com"})
+            self.assertEqual(response.status, 403)
+
+            response, _ = request("GET", "/api/obs/events", headers={"Referer": "https://example.com/page"})
+            self.assertEqual(response.status, 403)
 
             body = '{"preset":"light"}'
             response, _ = request(
@@ -555,7 +581,13 @@ class ProjectStaticTests(unittest.TestCase):
         for expected in [
             "function sanitizeImportedJsonValue(",
             "const MAX_JSON_SANITIZE_DEPTH = 32",
+            "const MAX_JSON_KEYS_PER_OBJECT = 2000",
+            "const MAX_JSON_ARRAY_LENGTH = 2000",
+            "const MAX_JSON_STRING_LENGTH = 4 * 1024 * 1024",
+            "const MAX_JSON_DATA_URL_STRING_LENGTH = 5 * 1024 * 1024",
+            "const MAX_JSON_NODE_COUNT = 50000",
             "const FORBIDDEN_JSON_KEYS",
+            "value.startsWith(PNG_DATA_URL_PREFIX)",
             "function assertSafePackagePath(path)",
             "const MAX_PURUPURU_PACKAGE_SIZE = 80 * 1024 * 1024",
             "const MAX_PURUPURU_UNZIPPED_SIZE = 120 * 1024 * 1024",
@@ -566,12 +598,35 @@ class ProjectStaticTests(unittest.TestCase):
             "if (nextTotal > MAX_PURUPURU_UNZIPPED_SIZE)",
             "const MAX_OBS_SNAPSHOT_JSON_BYTES = 24 * 1024 * 1024",
             "const MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE = 12 * 1024 * 1024",
+            "const OBS_INPUT_FETCH_TIMEOUT_MS = 2000",
+            "const controller = new AbortController()",
+            "const MAX_AVATAR_IMAGE_EDGE = 4096",
+            "const MAX_AVATAR_IMAGE_PIXELS = 16 * 1024 * 1024",
+            "function pngU8Dimensions(",
+            "function validateAvatarImageSize(",
             "validatePngDataUrl(src, name, MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE)",
+            "validateAvatarImageSize(pngU8Dimensions(dataUrlToU8(normalized), name), name)",
             "return await applyObsSnapshot(snapshot)",
-            "Promise.allSettled(Object.keys(AVATAR_PACKAGE_ASSETS).map",
+            "const requiredKeys = Object.keys(AVATAR_PACKAGE_ASSETS)",
+            "Promise.allSettled(requiredKeys.map",
+            "const MAX_CHARACTER_PROFILES = 12",
+            "navigator?.storage?.estimate?.()",
+            "function characterProfileRecordForStorage(record)",
+            "const characterDirtyRevision =",
+            "if (stillDirty) scheduleActiveCharacterAutosave",
+            "request.onblocked = () => failOpen",
+            "let drawingAvatarExpressionPreviewTimer = null",
+            "cachedPackageBlob: null",
             "function closeObsEventSource(",
             "function handlePageHide(",
             "window.addEventListener(\"pageshow\", restoreResourcesAfterPageShow)",
+            "maxDetectFps: 15",
+            "defaultDelegate: \"CPU\"",
+            "const FACE_TRACKING_PREFERRED_DELEGATE =",
+            "FACE_TRACKING_DELEGATE_QUERY === \"GPU\" ? \"GPU\" : FACE_TRACKING_CONFIG.defaultDelegate",
+            "const FACE_TRACKING_DETECT_INTERVAL_MS =",
+            "st.landmarker = await createLandmarker(\"CPU\")",
+            "now - st.lastDetectAttemptAt < FACE_TRACKING_DETECT_INTERVAL_MS",
             "function integrateHairSpringBucket(",
             "let faceRigMetricsCacheFrame = -1",
             "faceRigMetricsCacheFrame === motionFrameId",
@@ -588,6 +643,47 @@ class ProjectStaticTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_hair_physics_realism_improvements_are_wired(self) -> None:
+        app = self.read_text("app.js")
+        spring_body = self.js_function_body(app, "function integrateHairSpringBucket(")
+        warp_body = self.js_function_body(app, "function hairWarpPoint(")
+
+        # ★5: 毛先ほど減衰比を下げ、ハリのあるオーバーシュートを許容する。
+        self.assertIn("const c1 = lerp(24, 7.5, t) * damping", spring_body)
+        self.assertIn("const c2 = lerp(29, 12, t) * damping", spring_body)
+        self.assertIn("const cP = lerp(21, 6.5, t) * damping", spring_body)
+
+        # ★6: angle/head だけ follow-the-leader 化し、wave は段ごとのターゲットを維持する。
+        self.assertIn("const HAIR_CHAIN_FOLLOW = 0.68", app)
+        self.assertIn("const prev = options.prev || null", spring_body)
+        self.assertIn("const axT = prev ? lerp(targets.axTarget, prev.anglePos, chain) : targets.axTarget", spring_body)
+        self.assertIn("const hxT = prev ? lerp(targets.head.x, prev.headPosX, chain) : targets.head.x", spring_body)
+        self.assertIn("bucket.anglePos - axT", spring_body)
+        self.assertIn("bucket.headPosX - hxT", spring_body)
+        self.assertIn("bucket.wavePosX - wave.x", spring_body)
+        self.assertIn("bucket.wavePosY - wave.y", spring_body)
+        self.assertEqual(app.count("prev: i > 0 ? spring.buckets[i - 1] : null"), 2)
+
+        # ★7/★8: 円弧補正と速度スプレイを最終変位に合成する。
+        self.assertIn("const edgeShiftX =", warp_body)
+        self.assertIn("const motionDX =", warp_body)
+        self.assertIn("const arcLift = clamp((motionDX * motionDX) / (2 * swingLen), 0, 30) * activeMask", warp_body)
+        self.assertIn("const splayAmount = clamp(headSpeed, 0, 1.6) * activeMask * activeMask * springAmt", warp_body)
+        self.assertIn("p.x += motionDX + splayX", warp_body)
+        self.assertIn("p.y += motionDY - arcLift + splayY", warp_body)
+
+        # 推奨デフォルト: demo-avatar と新規/基準値は 40、他デモの差分は維持する。
+        self.assertIn("hairSpring: 40", app)
+        expected = {
+            "assets/demo-avatar/default-settings.json": 40,
+            "assets/demo-avatar02/default-settings.json": 50,
+            "assets/demo-avatar03/default-settings.json": 100,
+        }
+        for relative, hair_spring in expected.items():
+            payload = json.loads(self.read_text(relative))
+            self.assertEqual(payload["state"]["hairSpring"], hair_spring)
+            self.assertEqual(payload["baselineSettings"]["state"]["hairSpring"], hair_spring)
 
     def test_item_layer_deform_follow_is_opt_in(self) -> None:
         app = self.read_text("app.js")
@@ -687,6 +783,63 @@ class ProjectStaticTests(unittest.TestCase):
         for input_id, output_for in matches:
             self.assertEqual(output_for, input_id)
 
+    def test_mouth_crossfade_and_audio_meter_thresholds_are_wired(self) -> None:
+        app = self.read_text("app.js")
+        html = self.read_text("index.html")
+        css = self.read_text("styles.css")
+
+        self.assertIn('id="audioMeter" class="meter"', html)
+        self.assertIn('id="meterHalfLine"', html)
+        self.assertIn('id="meterFullLine"', html)
+        self.assertIn('id="mouthCrossfadeMs"', html)
+        self.assertIn('output for="mouthCrossfadeMs">0ms</output>', html)
+        for settings_path in [
+            "assets/demo-avatar/default-settings.json",
+            "assets/demo-avatar02/default-settings.json",
+            "assets/demo-avatar03/default-settings.json",
+        ]:
+            settings = json.loads(self.read_text(settings_path))
+            self.assertEqual(settings["state"]["mouthCrossfadeMs"], 0)
+            self.assertEqual(settings["baselineSettings"]["state"]["mouthCrossfadeMs"], 0)
+        self.assertIn(".meter-threshold-half", css)
+        self.assertIn(".meter-threshold-full", css)
+        self.assertIn("top: 0;", css)
+        self.assertIn("bottom: 0;", css)
+
+        for fragment in [
+            "const MOUTH_CROSSFADE_DEFAULT_MS = 0",
+            "const MOUTH_CROSSFADE_MAX_MS = 160",
+            "const AUDIO_METER_MAX_LEVEL = 0.45",
+            "mouthCrossfadeMs: MOUTH_CROSSFADE_DEFAULT_MS",
+            'mouth: ["micGain", "mouthHalf", "mouthFull", "mouthRelease", "mouthCrossfadeMs", "pyokoStrength"]',
+            'bindRange("mouthCrossfadeMs", "mouthCrossfadeMs", "ms")',
+            "function expressionKeyForMouth(",
+            "function mouthCrossfadeDurationMs(",
+            "function drawMouthBlendedExpression(",
+            "function mouthThresholdLevels(",
+            "function updateAudioMeterVisuals(",
+            "startMouthCrossfade(nextMouth, nowMs)",
+            "resetMouthBlendState()",
+        ]:
+            self.assertIn(fragment, app)
+
+        blend_body = self.js_function_body(app, "function drawMouthBlendedExpression(")
+        self.assertIn("const durationMs = mouthCrossfadeDurationMs()", blend_body)
+        self.assertIn("durationMs <= 0", blend_body)
+        self.assertIn("/ durationMs", blend_body)
+        self.assertIn("targetCtx.globalAlpha = prevAlpha;", blend_body)
+        self.assertIn("targetCtx.globalAlpha = prevAlpha * blendT;", blend_body)
+        self.assertNotIn("prevAlpha * (1 - blendT)", blend_body)
+        self.assertNotIn("MOUTH_CROSSFADE_MS", blend_body)
+
+        thresholds_body = self.js_function_body(app, "function mouthResponseConfig(")
+        self.assertIn("const range = Math.max(0.01, full - mouthFloor)", thresholds_body)
+
+        face_body = self.js_function_body(app, "function drawFaceAndHighlightLayer(")
+        shadow_body = self.js_function_body(app, "function drawFrontHairShadowReceiverMask(")
+        self.assertIn("drawMouthBlendedExpression(charCtx, faceSpec)", face_body)
+        self.assertIn("drawMouthBlendedExpression(frontHairShadowReceiverCtx, faceSpec)", shadow_body)
+
     def test_character_profile_switcher_mvp_is_wired(self) -> None:
         html = self.read_text("index.html")
         css = self.read_text("styles.css")
@@ -717,10 +870,16 @@ class ProjectStaticTests(unittest.TestCase):
             "function assetMapForCharacterProfile(",
             "async function refreshAssetBackedCharacterProfileAssets(",
             "const AVATAR_ASSET_THUMBNAIL_VERSION = \"composite-v1\"",
+            "const DEMO_AVATAR_DEFAULT_SETTINGS_MIGRATION_VERSION = \"github-main-2026-07-03\"",
+            "function sourceMapIncludesPath(",
+            "function managedDemoAvatarSourceKindForProfile(",
+            "function managedDefaultSettingsVersionForSourceKind(",
+            "function managedDefaultSettingsVersionForCharacterProfile(",
             "assetSignature",
             "thumbnailVersion",
             "defaultItemsSignature",
             "defaultSettingsSignature",
+            "defaultSettingsMigrationVersion",
             "function settingsPayloadSignature(",
             "async function refreshDefaultCharacterProfileSettings(",
             "async function switchCharacterProfile(",
@@ -735,8 +894,296 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("applyParsedPuruPuruPackage(parsed", load_body)
         self.assertIn("tryRememberAllSettingsPayload(buildAllSettingsPayload({ includeItemImages: false }))", load_body)
 
+        self.assertIn("const defaultSettingsMigrationVersion = settingsUrl ? managedDefaultSettingsVersionForSourceKind(sourceKind) : null;", app)
+        self.assertIn('if (sourceMapIncludesPath(assetMap, "assets/demo-avatar03/")) return DEMO_AVATAR03_SOURCE_KIND;', app)
+        self.assertIn("kind: managedSourceKind || record.source?.kind || \"asset\"", app)
+        self.assertIn("managedDemoAvatarSourceKindForProfile(profile) === DEMO_AVATAR03_SOURCE_KIND", app)
+        refresh_settings_body = self.js_function_body(app, "async function refreshDefaultCharacterProfileSettings(")
+        self.assertIn("managedDefaultSettingsVersionForCharacterProfile(record)", refresh_settings_body)
+        self.assertIn("record.source?.defaultSettingsMigrationVersion === defaultSettingsMigrationVersion", refresh_settings_body)
+        self.assertIn("defaultSettingsRefresh?.defaultSettingsMigrationVersion", app)
+
         flush_body = self.js_function_body(app, "async function flushActiveCharacterAutosave(")
         self.assertNotIn("buildPuruPuruPackagePayload", flush_body)
+
+    def test_drawing_avatar_feature_is_wired(self) -> None:
+        html = self.read_text("index.html")
+        css = self.read_text("styles.css")
+        app = self.read_text("app.js")
+
+        for fragment in [
+            'id="drawingAvatarStartButton"',
+            'id="drawingAvatarMenuButton"',
+            'id="drawingAvatarPanel"',
+            'id="drawingAvatarCanvasFrame"',
+            'id="drawingAvatarCanvas"',
+            'id="drawingAvatarOverlay"',
+            'id="drawingAvatarExpressionPreviewList"',
+            'id="drawingAvatarLayerList"',
+            'id="drawingAvatarAddItemButton"',
+            'id="drawingAvatarImportImageButton"',
+            'id="drawingAvatarImageFileInput"',
+            'id="drawingAvatarImageRemoveButton"',
+            'id="drawingAvatarImageList"',
+            'id="drawingAvatarImageReadout"',
+            'id="drawingAvatarImageTransformControls"',
+            'id="drawingAvatarImageX"',
+            'id="drawingAvatarImageY"',
+            'id="drawingAvatarImageScale"',
+            'id="drawingAvatarImageCenterButton"',
+            'id="drawingAvatarBrushButton"',
+            'id="drawingAvatarEraserButton"',
+            'id="drawingAvatarBrushSize"',
+            'id="drawingAvatarBrushSoftness"',
+            'id="drawingAvatarBrushStabilization"',
+            'id="drawingAvatarPressureEnabled"',
+            'id="drawingAvatarColorInput"',
+            'id="drawingAvatarUndoButton"',
+            'id="drawingAvatarRedoButton"',
+            'id="drawingAvatarClearButton"',
+            'id="drawingAvatarOnionSkin"',
+            'id="drawingAvatarFinishButton"',
+            'id="drawingAvatarCancelButton"',
+            'id="drawingAvatarStatus"',
+            'id="drawingAvatarZoomOutButton"',
+            'id="drawingAvatarZoomLabelButton"',
+            'id="drawingAvatarZoomInButton"',
+            'id="drawingAvatarZoomFitButton"',
+        ]:
+            self.assertIn(fragment, html)
+
+        # Every drawing UI id referenced by app.js must exist in index.html.
+        for element_id in set(re.findall(r'document\.querySelector\("#(drawingAvatar[A-Za-z]+)"\)', app)):
+            self.assertIn(f'id="{element_id}"', html, element_id)
+
+        self.assertIn("body.obs-mode .drawing-avatar-panel", css)
+        self.assertIn(".drawing-avatar-canvas-frame", css)
+        self.assertIn(".drawing-expression-preview-list", css)
+        self.assertIn(".drawing-image-list-button", css)
+        self.assertIn("#drawingAvatarCanvasFrame[data-mode=\"pan\"]", css)
+        self.assertIn("作画領域は常に左カラム", css)
+        self.assertIn("overflow-x: auto;", css)
+        self.assertIn("flex: 1 0 clamp(360px, calc(100vw - 360px), 640px);", css)
+        self.assertIn('id="drawingAvatarImageFileInput" type="file" accept="image/png,.png" multiple', html)
+
+        for fragment in [
+            'const DRAWN_AVATAR_SOURCE_KIND = "drawn-avatar"',
+            "const DRAWING_AVATAR_CANVAS_WIDTH = 1024",
+            "const DRAWING_AVATAR_CANVAS_HEIGHT = 1536",
+            "const DRAWING_AVATAR_MAX_HISTORY = 30",
+            "const DRAWING_AVATAR_EYE_LAYER_KEYS",
+            "const STANDARD_AVATAR_RIG_STATE",
+            "function applyStandardAvatarRigBaseline(",
+            "function createDrawingAvatarSession(",
+            "function ensureDrawingAvatarImportedImages(",
+            "function drawingAvatarActiveImportedImage(",
+            "async function importDrawingAvatarImagesToActiveLayer(",
+            "importedImages: ensureDrawingAvatarImportedImages(layer).map",
+            "function resizeDrawingAvatarViewport(",
+            "function zoomDrawingAvatarAt(",
+            "function drawDrawingAvatarOverlay(",
+            "function renderDrawingAvatarExpressionPreviews(",
+            "function drawingAvatarStrokeWidth(",
+            "async function buildDrawnAvatarImages(",
+            "async function buildDrawnAvatarItemLayerDrafts(",
+            "async function buildDrawnAvatarCharacterProfileRecord(",
+            "async function finishDrawingAvatarCreation(",
+            "function bindDrawingAvatarControls(",
+        ]:
+            self.assertIn(fragment, app)
+
+        # All six expression combinations must be generated from face base + eyes + mouth layers.
+        for combo_key in [
+            "eyesOpenMouthClosed",
+            "eyesOpenMouthHalf",
+            "eyesOpenMouthOpen",
+            "eyesClosedMouthClosed",
+            "eyesClosedMouthHalf",
+            "eyesClosedMouthOpen",
+        ]:
+            self.assertIn(f'key: "{combo_key}"', app)
+
+        # Mute is a preview-only toggle: exporting composed faces must not consult the muted flag.
+        compose_body = self.js_function_body(app, "function drawingAvatarComposeFaceCanvas(")
+        self.assertNotIn("muted", compose_body)
+        build_images_body = self.js_function_body(app, "async function buildDrawnAvatarImages(")
+        self.assertNotIn("muted", build_images_body)
+        validate_body = self.js_function_body(app, "function validateDrawingAvatarExpressionLayers(")
+        self.assertIn('const DRAWING_AVATAR_REQUIRED_EXPRESSION_LAYER_KEYS = [\n    "faceBase",\n  ];', app)
+        self.assertIn("if (!inkByKey[leftKey] || !inkByKey[rightKey]) continue;", validate_body)
+        self.assertNotIn("口パクを3段階で動かすため", validate_body)
+
+        # Finishing must register a new character profile and hand off to the existing wizard.
+        finish_body = self.js_function_body(app, "async function finishDrawingAvatarCreation(")
+        self.assertIn("prepareDrawingAvatarFinishInteractionState()", finish_body)
+        self.assertIn("putCharacterProfile(record)", finish_body)
+        self.assertIn("switchCharacterProfile(record.id)", finish_body)
+        self.assertIn("startCharacterWizard()", finish_body)
+
+        record_body = self.js_function_body(app, "async function buildDrawnAvatarCharacterProfileRecord(")
+        self.assertIn("DRAWN_AVATAR_SOURCE_KIND", record_body)
+        self.assertIn("collectItemImageBlobsFromSettingsPayload", record_body)
+        self.assertIn("applyStandardAvatarRigBaseline(settingsPayload)", record_body)
+        self.assertIn("frontHairShadowEnabled: false", record_body)
+        update_drawn_body = self.js_function_body(app, "function buildDrawnAvatarSettingsPayloadForUpdate(")
+        self.assertIn("frontHairShadowEnabled: false", update_drawn_body)
+
+    def test_standalone_drawing_avatar_import_limits_and_url_cleanup_are_wired(self) -> None:
+        standalone = self.read_text("standalone_drawing_avatar_export/standalone-drawing-avatar.js")
+        self.assertIn("const MAX_PROJECT_LAYERS = FIXED.length + MAX_ITEMS", standalone)
+        self.assertIn("const MAX_IMPORTED_IMAGES_PER_LAYER = 16", standalone)
+        self.assertIn("let outputObjectUrls = []", standalone)
+        self.assertIn("function revokeOutputObjectUrls()", standalone)
+        self.assertIn("for (const url of outputObjectUrls) URL.revokeObjectURL(url)", standalone)
+        self.assertIn("if (project.layers.length > MAX_PROJECT_LAYERS)", standalone)
+        self.assertIn("if (rawImages.length > MAX_IMPORTED_IMAGES_PER_LAYER)", standalone)
+        show_outputs_body = self.js_function_body(standalone, "function showOutputs(")
+        self.assertIn("revokeOutputObjectUrls()", show_outputs_body)
+        self.assertIn("outputObjectUrls = outs.map((o) => o.url)", show_outputs_body)
+        restore_body = self.js_function_body(standalone, "async function restore(")
+        self.assertIn("revokeOutputObjectUrls()", restore_body)
+
+    def test_character_wizard_incremental_points_and_grouped_hair_steps_are_wired(self) -> None:
+        app = self.read_text("app.js")
+        html = self.read_text("index.html")
+
+        steps_match = re.search(r"const CHARACTER_WIZARD_STEPS = \[(.*?)\];", app, re.S)
+        self.assertIsNotNone(steps_match)
+        self.assertEqual(
+            re.findall(r'"([^"]+)"', steps_match.group(1)),
+            [
+                "faceCenter",
+                "leftEye",
+                "rightEye",
+                "nose",
+                "mouth",
+                "chin",
+                "neckPivot",
+                "hairFront",
+                "hairSide",
+                "hairBack",
+                "finish",
+            ],
+        )
+        self.assertIn('<span id="characterWizardStepText" class="character-wizard-step">1 / 11</span>', html)
+
+        for key, group, title in [
+            ("hairFront", "front", "前髪の髪束ラインを確認"),
+            ("hairSide", "side", "横髪の髪束ラインを確認"),
+            ("hairBack", "back", "後ろ髪の髪束ラインを確認"),
+        ]:
+            self.assertIn(f"{key}: {{", app)
+            self.assertIn(f'title: "{title}"', app)
+            self.assertIn(f'hairGroup: "{group}"', app)
+        self.assertNotIn("hairBundles: {\n      label:", app)
+
+        hair_defs_match = re.search(r"const HAIR_BUNDLE_DEFS = \[(.*?)\];", app, re.S)
+        self.assertIsNotNone(hair_defs_match)
+        self.assertEqual(
+            Counter(re.findall(r'group: "(front|side|back)"', hair_defs_match.group(1))),
+            Counter({"front": 3, "side": 2, "back": 3}),
+        )
+        visible_defs_body = self.js_function_body(app, "function visibleHairBundleDefs(")
+        self.assertIn("HAIR_BUNDLE_DEFS.filter((def) => def.group === focus)", visible_defs_body)
+        hair_draw_body = self.js_function_body(app, "function drawHairBundleSetupOverlay(")
+        hair_hit_body = self.js_function_body(app, "function findHairBundleSetupPoint(")
+        for body in [hair_draw_body, hair_hit_body]:
+            self.assertIn("for (const def of visibleHairBundleDefs())", body)
+
+        draft_body = self.js_function_body(app, "function createCharacterWizardDraft(")
+        for fragment in [
+            "faceCenter: null",
+            "leftEye: null",
+            "rightEye: null",
+            "nose: null",
+            "mouth: null",
+            "chin: null",
+            "neckPivot: null",
+        ]:
+            self.assertIn(fragment, draft_body)
+        self.assertNotIn("cloneRigPoint(currentFaceCenter())", draft_body)
+        self.assertNotIn("cloneRigPoint(currentNeckPivot())", draft_body)
+        self.assertIn("hairBundles: cloneHairBundleRig(currentHairBundleRig())", draft_body)
+
+        current_point_body = self.js_function_body(app, "function characterWizardCurrentPointForStep(")
+        self.assertIn('if (stepKey === "faceCenter") return normalizeFaceCenter(currentFaceCenter());', current_point_body)
+        self.assertIn('if (stepKey === "neckPivot") return normalizeFaceCenter(currentNeckPivot());', current_point_body)
+        self.assertIn('["leftEye", "rightEye", "nose", "mouth", "chin"].includes(stepKey)', current_point_body)
+        self.assertIn("return normalizeFaceCenter(anchors?.[stepKey]);", current_point_body)
+
+        display_point_body = self.js_function_body(app, "function characterWizardDisplayPointForStep(")
+        self.assertIn("return characterWizardPointForStep(stepKey) || characterWizardCurrentPointForStep(stepKey);", display_point_body)
+
+        self.assertIn("function characterWizardHairGroup(", app)
+        self.assertIn("function resetHairBundleGroupToDefault(", app)
+        reset_group_body = self.js_function_body(app, "function resetHairBundleGroupToDefault(")
+        self.assertIn("if (def.group === group) next[def.key] = defaults[def.key];", reset_group_body)
+
+        sync_body = self.js_function_body(app, "function syncCharacterWizardHairStep(")
+        self.assertIn("const hairGroup = characterWizardHairGroup(stepKey);", sync_body)
+        self.assertIn("hairBundleFocus = hairGroup;", sync_body)
+        self.assertIn("ui.hairBundleFocusSelect.value = hairGroup", sync_body)
+        self.assertNotIn('stepKey === "hairBundles"', sync_body)
+
+        controls_body = self.js_function_body(app, "function updateCharacterWizardSetupControls(")
+        self.assertIn("ui.hairBundleFocusSelect.disabled = disabled", controls_body)
+
+        for signature in [
+            "function autoFillCharacterWizardStep(",
+            "function retryCharacterWizardStep(",
+        ]:
+            body = self.js_function_body(app, signature)
+            self.assertIn("resetHairBundleGroupToDefault(currentHairBundleRig(), hairGroup)", body)
+            self.assertNotIn("characterWizard.draft.hairBundles = defaultHairBundleRig();", body)
+
+        move_body = self.js_function_body(app, "function moveCharacterWizardStep(")
+        complete_body = self.js_function_body(app, "function completeCharacterWizardStep(")
+        draw_body = self.js_function_body(app, "function drawCharacterWizardOverlay(")
+        pointer_body = self.js_function_body(app, "function handleCharacterWizardPointerDown(")
+        for body in [move_body, complete_body, draw_body, pointer_body]:
+            self.assertIn("characterWizardHairGroup", body)
+            self.assertNotIn('stepKey === "hairBundles"', body)
+        ui_body = self.js_function_body(app, "function updateCharacterWizardUi(")
+        self.assertIn("const currentPoint = draftPoint ? null : characterWizardCurrentPointForStep(stepKey);", ui_body)
+        self.assertIn("変更しないなら", ui_body)
+        self.assertIn("const existingPoint = characterWizardCurrentPointForStep(stepKey);", complete_body)
+        self.assertIn("setCharacterWizardPointForStep(existingPoint, stepKey);", complete_body)
+        self.assertIn("const currentStepFallbackPoint = stepKey !== \"finish\" && !characterWizardPointForStep(stepKey)", draw_body)
+        self.assertIn("characterWizardDisplayPointForStep(stepKey)", draw_body)
+
+        estimate_lens_body = self.js_function_body(app, "function estimatedEyeLensRadiusForCenters(")
+        self.assertIn("const eyeDistance = Math.hypot(", estimate_lens_body)
+        self.assertIn("eyeDistance * 0.28", estimate_lens_body)
+        self.assertIn("eyeDistance * 0.20", estimate_lens_body)
+
+        wizard_highlight_body = self.js_function_body(app, "function resetCharacterWizardHighlightFromEyes(")
+        for fragment in [
+            "highlightEyesRaw = cloneEyeCenters(normalized);",
+            "state.tearLensRadiusX = radius.x;",
+            "state.tearLensRadiusY = radius.y;",
+            "state.tearLensRotationLeft = 0;",
+            "state.tearLensRotationRight = 0;",
+            "state.highlightSize = 14;",
+            "highlightPointsRaw = null;",
+            "subHighlightPointsRaw = null;",
+            "resetHighlightMotionState();",
+            "resetGeneratedHighlightCanvases();",
+            "return autoPlaceHighlightPoints();",
+        ]:
+            self.assertIn(fragment, wizard_highlight_body)
+
+        apply_wizard_body = self.js_function_body(app, "function applyCharacterWizardDraft(")
+        self.assertIn("const wizardEyeCenters = normalizeEyeCenters([anchors.leftEye, anchors.rightEye])", apply_wizard_body)
+        self.assertIn("highlightEyesRaw = wizardEyeCenters;", apply_wizard_body)
+        self.assertIn("resetCharacterWizardHighlightFromEyes(wizardEyeCenters);", apply_wizard_body)
+        self.assertNotIn("autoPlaceHighlightPoints();", apply_wizard_body)
+
+        self.assertIn(
+            "function closeCharacterWizard({ restore = false } = {}) {\n"
+            "    const originalHairFocus = characterWizard?.original?.hairFocus;",
+            app,
+        )
+        self.assertIn("hairBundleFocus = normalizeHairBundleFocus(originalHairFocus);", app)
 
     def test_gitignore_and_gitattributes_cover_public_cleanup(self) -> None:
         gitignore = self.read_text(".gitignore")
@@ -744,6 +1191,7 @@ class ProjectStaticTests(unittest.TestCase):
             "__pycache__/",
             "*.py[cod]",
             "node_modules/",
+            "*.tgz",
             ".agents/",
             "*.purupuru",
             "assets/*_backup_*/",
@@ -763,11 +1211,34 @@ class ProjectStaticTests(unittest.TestCase):
             "*.bat text eol=crlf",
             "*.sh text eol=lf",
             "*.js text eol=lf",
+            "*.mjs text eol=lf",
+            "*.ts text eol=lf",
             "*.py text eol=lf",
             "*.png binary",
             "*.purupuru binary",
         ]:
             self.assertIn(item, gitattributes)
+
+    def test_development_checks_and_ci_actions_are_pinned(self) -> None:
+        readme = self.read_text("README.md")
+        contributing = self.read_text(".github/CONTRIBUTING.md")
+        workflow = self.read_text(".github/workflows/ci.yml")
+        for command in [
+            "node --check app.js",
+            "node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js",
+            "node tests/js_runtime_checks.mjs",
+            "python -m py_compile scripts/run_local_server.py",
+            "python -m unittest tests.test_project_static",
+        ]:
+            self.assertIn(command, readme)
+            self.assertIn(command, contributing)
+            self.assertIn(command, workflow)
+        self.assertNotIn("uses: actions/checkout@v4", workflow)
+        self.assertNotIn("uses: actions/setup-python@v5", workflow)
+        self.assertNotIn("uses: actions/setup-node@v4", workflow)
+        self.assertRegex(workflow, r"uses: actions/checkout@[0-9a-f]{40}")
+        self.assertRegex(workflow, r"uses: actions/setup-python@[0-9a-f]{40}")
+        self.assertRegex(workflow, r"uses: actions/setup-node@[0-9a-f]{40}")
 
     def test_github_community_files_and_templates_are_clean(self) -> None:
         owner_placeholder = "OWN" + "ER"

@@ -9,7 +9,7 @@
   <meta name="color-scheme" content="light" />
   <meta
     http-equiv="Content-Security-Policy"
-    content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com; worker-src 'self' blob:; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'"
+    content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'"
   />
   <title>ぷるぷるPNGTuber</title>
   <link rel="icon" href="./favicon.ico" sizes="32x32" />
@@ -38,6 +38,8 @@
       <div id="characterList" class="character-list"></div>
       <div class="character-menu-actions">
         <button id="addCharacterButton" class="ghost-button" type="button">＋ ファイルから追加</button>
+        <button id="drawingAvatarMenuButton" class="ghost-button" type="button">＋ お絵描きで新キャラ作成</button>
+        <button id="drawingAvatarEditButton" class="ghost-button muted-button" type="button" hidden>お絵描きキャラを書き直す</button>
         <button id="duplicateCharacterButton" class="ghost-button muted-button" type="button">現在のキャラを複製</button>
       </div>
     </div>
@@ -49,7 +51,7 @@
 
   <section id="characterWizardPanel" class="character-wizard-panel guide-panel" aria-label="新キャラ作成ウィザード" hidden>
     <div class="character-wizard-header">
-      <span id="characterWizardStepText" class="character-wizard-step">1 / 9</span>
+      <span id="characterWizardStepText" class="character-wizard-step">1 / 11</span>
       <button id="characterWizardCancelButton" class="ghost-button muted-button" type="button">中止</button>
     </div>
     <h2 id="characterWizardTitle">顔の中心をクリック</h2>
@@ -111,8 +113,10 @@
           <span>角度: <strong id="angleReadout">0, 0</strong></span>
         </div>
         <p id="faceTrackStatus" class="small-note" role="status" aria-live="polite">顔トラッキング: OFF（マウス操作）</p>
-        <div class="meter" aria-label="音量メーター">
+        <div id="audioMeter" class="meter" aria-label="音量メーター">
           <span id="meterFill"></span>
+          <i id="meterHalfLine" class="meter-threshold meter-threshold-half" aria-hidden="true"></i>
+          <i id="meterFullLine" class="meter-threshold meter-threshold-full" aria-hidden="true"></i>
         </div>
         <p id="audioError" class="error" role="alert" aria-live="assertive" hidden></p>
       </section>
@@ -137,6 +141,8 @@
           <li><span>3</span>.purupuru 保存でバックアップする</li>
         </ol>
         <button id="characterWizardStartButton" class="primary-button full-width-button" type="button">新キャラ作成を開始</button>
+        <button id="drawingAvatarStartButton" class="ghost-button full-width-button" type="button">お絵描きで新キャラ作成</button>
+        <p class="small-note">PNG素材がなくても、ブラウザ上で顔・目・口・髪を描いてそのままアバターにできます。</p>
       </section>
 
       <div class="snapshot-row">
@@ -314,6 +320,11 @@
             <span>口の戻り<small>声が止まった後の戻り</small></span>
             <input id="mouthRelease" type="range" min="4" max="45" value="18" />
             <output for="mouthRelease">18%</output>
+          </label>
+          <label class="control-row">
+            <span>口フェード<small>口PNGの切り替え時間</small></span>
+            <input id="mouthCrossfadeMs" type="range" min="0" max="160" step="4" value="0" />
+            <output for="mouthCrossfadeMs">0ms</output>
           </label>
           <p class="small-note">口は素早く開き、戻る時は少し遅れます。大きく喋った時だけ顎と頬が軽くぷにっと動きます。</p>
         </section>
@@ -717,6 +728,140 @@
       </section>
     </div>
   </aside>
+
+  <section id="drawingAvatarPanel" class="drawing-avatar-panel" aria-label="お絵描きで新キャラ作成" hidden>
+    <div class="drawing-avatar-window">
+      <header class="drawing-avatar-header">
+        <div class="drawing-avatar-header-text">
+          <h2>お絵描きで新キャラ作成</h2>
+          <p id="drawingAvatarStatus" class="small-note" role="status" aria-live="polite">描く対象を選んで、キャンバスに描いてください。</p>
+        </div>
+        <button id="drawingAvatarCancelButton" class="ghost-button muted-button" type="button">閉じる</button>
+      </header>
+      <div class="drawing-avatar-body">
+        <div class="drawing-avatar-canvas-area">
+          <div class="drawing-avatar-canvas-toolbar" aria-label="お絵描きキャンバス操作">
+            <label class="drawing-avatar-toolbar-slider" title="線のガタつきを抑えて滑らかにします">
+              <span>手ぶれ補正</span>
+              <input id="drawingAvatarBrushStabilization" type="range" min="0" max="100" value="30" />
+              <output for="drawingAvatarBrushStabilization">30%</output>
+            </label>
+            <label class="drawing-avatar-toolbar-check" title="ペンタブレットの筆圧で太さが変わります">
+              <input id="drawingAvatarPressureEnabled" type="checkbox" checked />
+              <span>筆圧</span>
+            </label>
+            <div class="drawing-avatar-zoom-controls" role="group" aria-label="ズーム">
+              <button id="drawingAvatarZoomOutButton" class="ghost-button" type="button" title="縮小（-）">−</button>
+              <button id="drawingAvatarZoomLabelButton" class="ghost-button drawing-avatar-zoom-label" type="button" title="クリックで100%表示">100%</button>
+              <button id="drawingAvatarZoomInButton" class="ghost-button" type="button" title="拡大（+）">＋</button>
+              <button id="drawingAvatarZoomFitButton" class="ghost-button muted-button" type="button" title="全体表示（0）">全体</button>
+            </div>
+          </div>
+          <div id="drawingAvatarCanvasFrame" class="drawing-avatar-canvas-frame" data-mode="brush">
+            <canvas id="drawingAvatarCanvas" width="1024" height="1536" aria-label="お絵描きキャンバス"></canvas>
+            <canvas id="drawingAvatarOverlay" width="1024" height="1536" aria-hidden="true"></canvas>
+          </div>
+          <p class="small-note drawing-avatar-shortcut-hint">ホイール：ズーム ／ Space または中ボタンドラッグ：画面移動 ／ B・G・E：ツール切替 ／ [ ]：太さ</p>
+        </div>
+        <div class="drawing-avatar-sidebar">
+          <section class="panel is-basic-panel drawing-avatar-expression-panel">
+            <div class="panel-title">
+              <span>表情プレビュー</span>
+              <strong>クリックで切替</strong>
+            </div>
+            <div id="drawingAvatarExpressionPreviewList" class="drawing-expression-preview-list" aria-label="お絵描き表情プレビュー"></div>
+            <p class="small-note">描きながら6表情を確認できます。クリックするとキャンバスの目・口表示が切り替わります。</p>
+          </section>
+          <section class="panel is-basic-panel">
+            <div class="panel-title">
+              <span>描く対象</span>
+              <strong id="drawingAvatarActiveLayerReadout">顔ベース</strong>
+            </div>
+            <div id="drawingAvatarLayerList" class="drawing-layer-list" aria-label="お絵描きレイヤー一覧"></div>
+            <button id="drawingAvatarAddItemButton" class="ghost-button full-width-button" type="button">＋ アイテムレイヤーを追加</button>
+            <div class="simple-grid">
+              <button id="drawingAvatarImportImageButton" class="ghost-button full-width-button" type="button">PNG画像を追加</button>
+              <button id="drawingAvatarImageRemoveButton" class="ghost-button muted-button full-width-button" type="button">選択PNGを削除</button>
+            </div>
+            <input id="drawingAvatarImageFileInput" type="file" accept="image/png,.png" multiple hidden />
+            <div id="drawingAvatarImageList" class="drawing-image-list" aria-label="このレイヤー内のPNG一覧"></div>
+            <div id="drawingAvatarImageTransformControls" class="drawing-image-controls" hidden>
+              <p id="drawingAvatarImageReadout" class="small-note drawing-image-readout">選択中のPNGを調整します。</p>
+              <label class="control-row">
+                <span>左右<small>読み込みPNGの位置</small></span>
+                <input id="drawingAvatarImageX" type="range" min="-1024" max="1024" value="0" />
+                <output for="drawingAvatarImageX">0px</output>
+              </label>
+              <label class="control-row">
+                <span>上下<small>読み込みPNGの位置</small></span>
+                <input id="drawingAvatarImageY" type="range" min="-1536" max="1536" value="0" />
+                <output for="drawingAvatarImageY">0px</output>
+              </label>
+              <label class="control-row">
+                <span>大きさ<small>読み込みPNGの拡大縮小</small></span>
+                <input id="drawingAvatarImageScale" type="range" min="5" max="300" value="100" />
+                <output for="drawingAvatarImageScale">100%</output>
+              </label>
+              <button id="drawingAvatarImageCenterButton" class="ghost-button muted-button full-width-button" type="button">PNGを中央へ戻す</button>
+            </div>
+            <p class="small-note">👁でレイヤーを一時的に隠せます（ミュート）。ミュートしても完成時の書き出しには含まれます。アイテムレイヤーだけは×で削除すると書き出されません。</p>
+          </section>
+          <section class="panel is-visual-panel">
+            <div class="panel-title">
+              <span>ブラシ</span>
+              <strong id="drawingAvatarToolReadout">ブラシ</strong>
+            </div>
+            <div class="simple-grid drawing-tool-grid">
+              <button id="drawingAvatarBrushButton" class="ghost-button" type="button" aria-pressed="true">ブラシ</button>
+              <button id="drawingAvatarFillButton" class="ghost-button muted-button" type="button" aria-pressed="false">塗りつぶし</button>
+              <button id="drawingAvatarEraserButton" class="ghost-button muted-button" type="button" aria-pressed="false">消しゴム</button>
+            </div>
+            <label class="control-row">
+              <span>太さ<small>ブラシ・消しゴム共通</small></span>
+              <input id="drawingAvatarBrushSize" type="range" min="2" max="160" value="14" />
+              <output for="drawingAvatarBrushSize">14px</output>
+            </label>
+            <label class="control-row">
+              <span>柔らかさ<small>0%で硬く、上げるほど馴染みます</small></span>
+              <input id="drawingAvatarBrushSoftness" type="range" min="0" max="100" value="0" />
+              <output for="drawingAvatarBrushSoftness">0%</output>
+            </label>
+            <label class="select-row color-picker-row">
+              <span>色<small>ブラシの色</small></span>
+              <input id="drawingAvatarColorInput" class="color-input" type="color" value="#3c3026" />
+            </label>
+            <div id="drawingAvatarColorSwatches" class="drawing-color-swatches" aria-label="ブラシ色切り替え">
+              <button class="drawing-color-swatch" type="button" data-color="#3c3026" aria-label="色1" aria-pressed="true"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#f2c7a5" aria-label="色2" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#e97777" aria-label="色3" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#3d8cff" aria-label="色4" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#2c292c" aria-label="色5" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#ffffff" aria-label="色6" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#8b6f62" aria-label="色7" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+              <button class="drawing-color-swatch" type="button" data-color="#d96c4f" aria-label="色8" aria-pressed="false"><span class="drawing-color-chip"></span></button>
+            </div>
+            <div class="simple-grid">
+              <button id="drawingAvatarUndoButton" class="ghost-button" type="button">元に戻す</button>
+              <button id="drawingAvatarRedoButton" class="ghost-button muted-button" type="button">やり直し</button>
+            </div>
+            <button id="drawingAvatarClearButton" class="ghost-button muted-button danger-button full-width-button" type="button">このレイヤーをクリア</button>
+            <label class="check-row">
+              <input id="drawingAvatarOnionSkin" type="checkbox" checked />
+              <span>他レイヤーを半透明で表示<small>描く対象だけ濃く表示します</small></span>
+            </label>
+          </section>
+          <section class="panel is-basic-panel">
+            <div class="panel-title">
+              <span>完成</span>
+              <strong>6差分を自動生成</strong>
+            </div>
+            <p class="small-note">完成すると顔ベース+目+口から6枚の表情PNGを自動合成します。口パク用に「口・閉じ」「口・中間」「口・開け」は別々に描いてください。</p>
+            <button id="drawingAvatarFinishButton" class="primary-button full-width-button" type="button">完成してキャラを作成</button>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <button id="dockPeekButton" class="dock-peek-button" type="button" aria-expanded="false">Controls</button>
 

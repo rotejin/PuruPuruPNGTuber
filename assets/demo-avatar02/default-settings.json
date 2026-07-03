@@ -63,7 +63,8 @@
     "micGain": 220,
     "mouthHalf": 8,
     "mouthFull": 22,
-    "mouthRelease": 18
+    "mouthRelease": 18,
+    "mouthCrossfadeMs": 0
   },
   "outputSettings": {
     "obsPreset": "standard"
@@ -1851,7 +1852,8 @@
       "micGain": 220,
       "mouthHalf": 8,
       "mouthFull": 22,
-      "mouthRelease": 18
+      "mouthRelease": 18,
+      "mouthCrossfadeMs": 0
     }
   },
   "packageVersion": 1
