@@ -8832,15 +8832,17 @@
       await audioEngine.startMic();
       micOn = true;
       if (ui.micButton) {
-        ui.micButton.textContent = "マイク停止";
+        setButtonLabel(ui.micButton, "マイク停止");
         ui.micButton.setAttribute("aria-pressed", "true");
+        ui.micButton.classList.add("is-active");
       }
     } catch (error) {
       audioEngine.stopMic();
       micOn = false;
       if (ui.micButton) {
-        ui.micButton.textContent = "マイク開始";
+        setButtonLabel(ui.micButton, "マイク開始");
         ui.micButton.setAttribute("aria-pressed", "false");
+        ui.micButton.classList.remove("is-active");
       }
       setAudioError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -8853,8 +8855,9 @@
     audioEngine.stopMic();
     micOn = false;
     if (ui.micButton) {
-      ui.micButton.textContent = "マイク開始";
+      setButtonLabel(ui.micButton, "マイク開始");
       ui.micButton.setAttribute("aria-pressed", "false");
+      ui.micButton.classList.remove("is-active");
     }
   }
 
@@ -8867,14 +8870,14 @@
     try {
       await faceTracker.start();
       if (ui.faceTrackButton) {
-        ui.faceTrackButton.textContent = "顔トラッキング停止";
+        setButtonLabel(ui.faceTrackButton, "顔トラッキング停止");
         ui.faceTrackButton.setAttribute("aria-pressed", "true");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setFaceTrackStatus(`顔トラッキング: ${message}`, true);
       if (ui.faceTrackButton) {
-        ui.faceTrackButton.textContent = "顔トラッキング開始";
+        setButtonLabel(ui.faceTrackButton, "顔トラッキング開始");
         ui.faceTrackButton.setAttribute("aria-pressed", "false");
       }
     } finally {
@@ -8886,7 +8889,7 @@
     if (!faceTracker) return;
     faceTracker.stop();
     if (ui.faceTrackButton) {
-      ui.faceTrackButton.textContent = "顔トラッキング開始";
+      setButtonLabel(ui.faceTrackButton, "顔トラッキング開始");
       ui.faceTrackButton.setAttribute("aria-pressed", "false");
     }
     setFaceTrackStatus("顔トラッキング: OFF（マウス操作）");
@@ -8945,7 +8948,7 @@
   function updateMouseFollowButton() {
     if (!ui.mouseFollowButton) return;
     const idleLocksMouse = state.idleMotionEnabled;
-    ui.mouseFollowButton.textContent = idleLocksMouse ? "マウス追従 停止中" : `マウス追従 ${state.mouseFollowEnabled ? "ON" : "OFF"}`;
+    setButtonLabel(ui.mouseFollowButton, idleLocksMouse ? "マウス追従 停止中" : `マウス追従 ${state.mouseFollowEnabled ? "ON" : "OFF"}`);
     ui.mouseFollowButton.setAttribute("aria-pressed", String(!idleLocksMouse && state.mouseFollowEnabled));
     ui.mouseFollowButton.disabled = idleLocksMouse;
   }
@@ -13053,9 +13056,15 @@
     if (output) output.textContent = `${value}${suffix}`;
   }
 
+  function setButtonLabel(button, text) {
+    if (!button) return;
+    const label = button.querySelector(".chip-label");
+    (label || button).textContent = text;
+  }
+
   function syncButtonPressed(button, enabledLabel, disabledLabel, enabled) {
     if (!button) return;
-    button.textContent = enabled ? enabledLabel : disabledLabel;
+    setButtonLabel(button, enabled ? enabledLabel : disabledLabel);
     button.setAttribute("aria-pressed", String(Boolean(enabled)));
   }
 
@@ -13907,7 +13916,7 @@
 
     ui.demoTalkButton?.addEventListener("click", () => {
       state.demoTalk = !state.demoTalk;
-      ui.demoTalkButton.textContent = `口パクデモ ${state.demoTalk ? "ON" : "OFF"}`;
+      setButtonLabel(ui.demoTalkButton, `口パクデモ ${state.demoTalk ? "ON" : "OFF"}`);
       ui.demoTalkButton.setAttribute("aria-pressed", String(state.demoTalk));
     });
 
@@ -13936,7 +13945,7 @@
 
     ui.blinkButton?.addEventListener("click", () => {
       state.autoBlink = !state.autoBlink;
-      ui.blinkButton.textContent = `まばたき ${state.autoBlink ? "ON" : "OFF"}`;
+      setButtonLabel(ui.blinkButton, `まばたき ${state.autoBlink ? "ON" : "OFF"}`);
       ui.blinkButton.setAttribute("aria-pressed", String(state.autoBlink));
       scheduleBlink();
       markActiveCharacterDirty("settings", "auto-blink");

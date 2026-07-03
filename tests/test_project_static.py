@@ -1412,6 +1412,58 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertNotIn("function bindWorkspaceTabs", app)
         self.assertNotIn("function bindAdjustTabs", app)
 
+    def test_live_bar_is_wired(self) -> None:
+        html = self.read_text("index.html")
+        css = self.read_text("styles.css")
+        app = self.read_text("app.js")
+
+        live_bar_match = re.search(r'<div id="liveBar" class="live-bar"[^>]*>.*?\n  </div>', html, re.DOTALL)
+        self.assertIsNotNone(live_bar_match)
+        live_bar_html = live_bar_match.group(0)
+
+        for fragment in [
+            'id="micButton"',
+            'id="faceTrackButton"',
+            'id="demoTalkButton"',
+            'id="blinkButton"',
+            'id="mouseFollowButton"',
+            'id="idleMotionButton"',
+            'id="centerButton"',
+            'id="faceCalibrateButton"',
+            'id="statusPill"',
+            'id="audioMeter" class="meter"',
+            'id="meterFill"',
+            'id="meterHalfLine"',
+            'id="meterFullLine"',
+            'id="mouthReadout"',
+            'id="angleReadout"',
+            'id="faceTrackStatus"',
+            'id="audioError"',
+        ]:
+            self.assertIn(fragment, live_bar_html)
+
+        # ライブバーは control-card の外(body直下)に独立配置されていること。
+        self.assertNotIn('<div class="control-sticky-area">', html)
+        self.assertLess(html.index('id="liveBar"'), html.index('class="control-card"'))
+
+        self.assertIn("body.obs-mode .live-bar", css)
+        self.assertIn(".chip-solid", css)
+        self.assertIn(".chip-quiet", css)
+        self.assertIn(".chip-divider", css)
+        self.assertIn('.chip[aria-pressed="true"]', css)
+
+        # チップのラベルは .chip-label 経由で書き換える(SVGアイコンを壊さないため)。
+        self.assertIn("function setButtonLabel(button, text)", app)
+        for button_id in [
+            "micButton",
+            "faceTrackButton",
+            "mouseFollowButton",
+            "demoTalkButton",
+            "blinkButton",
+            "idleMotionButton",
+        ]:
+            self.assertNotIn(f"ui.{button_id}.textContent =", app)
+
 
 if __name__ == "__main__":
     unittest.main()

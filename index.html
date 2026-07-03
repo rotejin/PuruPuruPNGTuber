@@ -85,36 +85,59 @@
     </div>
   </section>
 
-  <aside class="control-card" aria-label="調整パネル">
-    <div class="control-sticky-area">
-      <div class="status-row">
-        <span id="statusPill" class="status-pill" role="status" aria-live="polite">loading</span>
-      </div>
-      <section class="live-bar" aria-label="ライブ操作">
-        <div class="live-bar-grid">
-          <button id="mouseFollowButton" class="ghost-button header-mouse-follow-button" type="button" aria-pressed="true">マウス追従 ON</button>
-          <button id="idleMotionButton" class="ghost-button header-idle-motion-button" type="button" aria-pressed="false">待機モーション OFF</button>
-          <button id="centerButton" class="ghost-button full-width-button" type="button">正面へ戻す</button>
-          <button id="demoTalkButton" class="ghost-button" type="button" aria-pressed="false">口パクデモ OFF</button>
-          <button id="blinkButton" class="ghost-button" type="button" aria-pressed="true">まばたき ON</button>
-          <button id="micButton" class="primary-button" type="button">マイク開始</button>
-          <button id="faceTrackButton" class="ghost-button" type="button" aria-pressed="false">顔トラッキング開始</button>
-          <button id="faceCalibrateButton" class="ghost-button full-width-button" type="button">正面キャリブレーション</button>
-        </div>
-        <div class="live-readout">
-          <span>口: <strong id="mouthReadout">とじ</strong></span>
-          <span>角度: <strong id="angleReadout">0, 0</strong></span>
-        </div>
-        <p id="faceTrackStatus" class="small-note" role="status" aria-live="polite">顔トラッキング: OFF（マウス操作）</p>
-        <div id="audioMeter" class="meter" aria-label="音量メーター">
+  <div id="liveBar" class="live-bar" aria-label="ライブ操作">
+    <div class="live-chips">
+      <button id="micButton" class="chip chip-solid" type="button">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"></rect><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"></path><path d="M10 15v2.5"></path></svg>
+        <span class="chip-label">マイク開始</span>
+      </button>
+      <button id="faceTrackButton" class="chip" type="button" aria-pressed="false">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 6V3.5h3"></path><path d="M17 6V3.5h-3"></path><path d="M3 14v2.5h3"></path><path d="M17 14v2.5h-3"></path><circle cx="10" cy="10" r="3"></circle></svg>
+        <span class="chip-label">顔トラッキング開始</span>
+      </button>
+      <button id="demoTalkButton" class="chip" type="button" aria-pressed="false">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 8v4"></path><path d="M8 5v10"></path><path d="M12 3v14"></path><path d="M16 7v6"></path></svg>
+        <span class="chip-label">口パクデモ OFF</span>
+      </button>
+      <button id="blinkButton" class="chip" type="button" aria-pressed="true">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 10c3-5 11-5 14 0"></path><path d="M3 10c3 5 11 5 14 0z"></path><circle cx="10" cy="10" r="1.6"></circle></svg>
+        <span class="chip-label">まばたき ON</span>
+      </button>
+      <button id="mouseFollowButton" class="chip" type="button" aria-pressed="true">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4l11 4.6-4.8 1.6L9.6 15z"></path></svg>
+        <span class="chip-label">マウス追従 ON</span>
+      </button>
+      <button id="idleMotionButton" class="chip" type="button" aria-pressed="false">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 12c2-4.5 4-4.5 6 0s4 4.5 6 0"></path></svg>
+        <span class="chip-label">待機モーション OFF</span>
+      </button>
+      <i class="chip-divider" aria-hidden="true"></i>
+      <button id="centerButton" class="chip chip-quiet" type="button">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10" cy="10" r="5"></circle><path d="M10 2v3M10 15v3M2 10h3M15 10h3"></path></svg>
+        <span class="chip-label">正面へ戻す</span>
+      </button>
+      <button id="faceCalibrateButton" class="chip chip-quiet" type="button">
+        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7"></circle><path d="M10 6.5l1.8 5.3-5.3-1.8z"></path></svg>
+        <span class="chip-label">正面キャリブレーション</span>
+      </button>
+    </div>
+    <div class="live-readout">
+      <span id="statusPill" class="status-pill" role="status" aria-live="polite">loading</span>
+      <span class="readout-meter">声
+        <span id="audioMeter" class="meter" aria-label="音量メーター">
           <span id="meterFill"></span>
           <i id="meterHalfLine" class="meter-threshold meter-threshold-half" aria-hidden="true"></i>
           <i id="meterFullLine" class="meter-threshold meter-threshold-full" aria-hidden="true"></i>
-        </div>
-        <p id="audioError" class="error" role="alert" aria-live="assertive" hidden></p>
-      </section>
+        </span>
+      </span>
+      <span>口: <strong id="mouthReadout">とじ</strong></span>
+      <span>角度: <strong id="angleReadout">0, 0</strong></span>
     </div>
+    <p id="faceTrackStatus" class="small-note" role="status" aria-live="polite">顔トラッキング: OFF（マウス操作）</p>
+    <p id="audioError" class="error" role="alert" aria-live="assertive" hidden></p>
+  </div>
 
+  <aside class="control-card" aria-label="調整パネル">
     <div class="dock-body">
       <nav class="nav-rail" aria-label="設定セクション">
         <button type="button" data-section-target="start" aria-pressed="true">
