@@ -1071,8 +1071,8 @@ select:focus {
   padding: 10px 14px;
   color: var(--ink);
   background: var(--panel-bg-soft);
-  border: 1.5px dashed var(--line);
-  border-radius: 12px;
+  border: 2px dashed var(--line);
+  border-radius: 16px;
   text-align: center;
   font-size: 12px;
   font-weight: 800;
@@ -1105,12 +1105,12 @@ select:focus {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
+  gap: 6px 10px;
   min-height: 62px;
-  padding: 6px;
+  padding: 8px;
   background: rgba(255, 255, 255, 0.58);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 body.stage-bg-dark .item-row {
@@ -1230,6 +1230,7 @@ body.stage-bg-dark .meter-threshold {
   display: flex;
   justify-content: space-between;
   gap: 8px;
+  margin-top: 8px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
@@ -1254,14 +1255,67 @@ body.stage-bg-dark .meter-threshold {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
-.obs-preset-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+/* Phase 4b: URLプレビュー（code風面）+ コピー操作を横並びにする行 */
+.url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.obs-preset-button[aria-pressed="true"] {
-  border-color: rgba(var(--accent-rgb), 0.42);
-  background: rgba(var(--accent-rgb), 0.14);
+.url-row .code-note {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+}
+
+.url-row .primary-button {
+  flex: none;
+  margin-top: 0;
+}
+
+/* Phase 4b: OBSプリセット等のセグメント切替（外枠が面、選択中が白抜き） */
+.segmented {
+  display: flex;
+  gap: 0;
+  padding: 3px;
+  background: rgba(74, 58, 46, 0.06);
+  border-radius: 12px;
+}
+
+.segmented .obs-preset-button {
+  flex: 1;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 8px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.segmented .obs-preset-button:hover {
   color: var(--ink);
+}
+
+.segmented .obs-preset-button[aria-pressed="true"] {
+  color: var(--accent-text);
+  background: #fff;
+  font-weight: 900;
+  box-shadow: 0 1px 3px rgba(74, 58, 46, 0.14);
+}
+
+body.stage-bg-dark .segmented .obs-preset-button[aria-pressed="true"] {
+  background: var(--card-bg);
 }
 
 .note,

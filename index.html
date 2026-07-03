@@ -640,168 +640,172 @@
         <button class="section-reset ghost-button muted-button" type="button" data-reset-section="look">基準値へ戻す</button>
           </div>
           <div class="section-page" data-section-page="items" hidden>
-      <section class="panel is-item-panel">
-        <div class="panel-title">
-          <span>アイテムの追加</span>
-          <strong id="itemFileReadout">未追加</strong>
-        </div>
-        <p class="small-note">PNGアイテムを追加・PNGをここにドラッグ＆ドロップ、またはクリックして選択できます。</p>
+        <header class="section-head">
+          <h2>アイテム</h2>
+          <p>メガネやぬいぐるみなど、PNGパーツを重ねられます。</p>
+        </header>
         <div class="drop-zone" id="itemDropZone" role="button" tabindex="0">PNGをここにドラッグ＆ドロップ<br />またはクリックして選択</div>
         <input id="itemFileInput" type="file" accept="image/png,.png" multiple hidden />
+        <p class="readout"><span>追加状況</span><strong id="itemFileReadout">未追加</strong></p>
         <p id="itemStatus" class="small-note">PNGだけ追加できます。PNGアイテムは .purupuru に画像込みで保存されます。</p>
-      </section>
 
-      <section class="panel is-item-panel">
-        <div class="panel-title">
-          <span>アイテム一覧</span>
-          <strong id="itemLayerReadout">0個</strong>
-        </div>
-        <div class="item-list" id="itemLayerList" aria-label="追加アイテム一覧"></div>
-        <p class="small-note">同じ重なり位置では、一覧で上にあるアイテムほど前面に表示されます。</p>
-      </section>
+        <section class="panel is-item-panel">
+          <div class="panel-title">
+            <span>アイテム一覧</span>
+            <strong id="itemLayerReadout">0個</strong>
+          </div>
+          <div class="item-list" id="itemLayerList" aria-label="追加アイテム一覧"></div>
+          <p class="small-note">同じ重なり位置では、一覧で上にあるアイテムほど前面に表示されます。</p>
+        </section>
 
-      <section class="panel is-item-panel">
-        <div class="panel-title">
-          <span>選択中アイテムの調整</span>
-          <strong id="itemSelectedReadout">未選択</strong>
-        </div>
-        <label class="select-row">
-          <span>重なり位置<small>キャラとの前後関係</small></span>
-          <select id="itemSlotSelect">
-            <option value="stageBack">背景固定</option>
-            <option value="characterBack">キャラ背面</option>
-            <option value="faceBack">顔の後ろ・後ろ髪の前</option>
-            <option value="faceFront">顔の前・前髪の下</option>
-            <option value="frontHairFront" selected>前髪の前</option>
-            <option value="stageFront">画面最前面</option>
-          </select>
-        </label>
-        <label class="check-row">
-          <input id="itemDeformFollowEnabled" type="checkbox" />
-          <span>顔・髪の変形にも連動<small>OFF: サングラス・ヘアピン向け / ON: ウィッグ・髪束向け</small></span>
-        </label>
-        <label class="control-row">
-          <span>顔・髪への追従度<small>横向き時の移動量を調整</small></span>
-          <input id="itemFollowStrength" type="range" min="0" max="200" value="100" />
-          <output for="itemFollowStrength">100%</output>
-        </label>
-        <label class="check-row">
-          <input id="itemDepthEnabled" type="checkbox" />
-          <span>深度演出（体パーツ向け）<small>首元が顔に同調し、下へ行くほどしなる。体・胴体画像に</small></span>
-        </label>
-        <label class="control-row">
-          <span>奥行き<small>深いほどしなりが控えめ・ゆったり</small></span>
-          <input id="itemDepth" type="range" min="0" max="100" value="40" />
-          <output for="itemDepth">40%</output>
-        </label>
-        <label class="control-row">
-          <span>サイズ</span>
-          <input id="itemScale" type="range" min="10" max="500" value="100" />
-          <output for="itemScale">100%</output>
-        </label>
-        <label class="control-row">
-          <span>回転</span>
-          <input id="itemRotation" type="range" min="-180" max="180" value="0" />
-          <output for="itemRotation">0°</output>
-        </label>
-        <label class="control-row">
-          <span>X位置</span>
-          <input id="itemX" type="range" min="-3000" max="3000" value="0" />
-          <output for="itemX">0px</output>
-        </label>
-        <label class="control-row">
-          <span>Y位置</span>
-          <input id="itemY" type="range" min="-3000" max="3000" value="0" />
-          <output for="itemY">0px</output>
-        </label>
-        <label class="control-row">
-          <span>不透明度</span>
-          <input id="itemOpacity" type="range" min="10" max="100" value="100" />
-          <output for="itemOpacity">100%</output>
-        </label>
-        <div class="simple-grid">
-          <button id="itemCenterButton" class="ghost-button" type="button">中央へ</button>
-          <button id="itemDuplicateButton" class="ghost-button" type="button">複製</button>
-        </div>
-        <button id="itemDeleteButton" class="ghost-button muted-button danger-button full-width-button" type="button">選択アイテムを削除</button>
-        <button id="itemDeleteAllButton" class="ghost-button muted-button danger-button full-width-button" type="button">追加アイテムを全削除</button>
-        <p class="small-note">キャンバス上でドラッグ移動できます。選択中アイテムの右上◆でサイズ変更できます。</p>
-      </section>
+        <section class="panel is-item-panel">
+          <div class="panel-title">
+            <span>選択中のアイテム</span>
+            <strong id="itemSelectedReadout">未選択</strong>
+          </div>
+          <label class="select-row">
+            <span>重なり位置<small>キャラとの前後関係</small></span>
+            <select id="itemSlotSelect">
+              <option value="stageBack">背景固定</option>
+              <option value="characterBack">キャラ背面</option>
+              <option value="faceBack">顔の後ろ・後ろ髪の前</option>
+              <option value="faceFront">顔の前・前髪の下</option>
+              <option value="frontHairFront" selected>前髪の前</option>
+              <option value="stageFront">画面最前面</option>
+            </select>
+          </label>
+          <label class="check-row">
+            <input id="itemDeformFollowEnabled" type="checkbox" />
+            <span>顔・髪の変形にも連動<small>OFF: サングラス・ヘアピン向け / ON: ウィッグ・髪束向け</small></span>
+          </label>
+          <label class="control-row">
+            <span>顔・髪への追従度<small>横向き時の移動量を調整</small></span>
+            <input id="itemFollowStrength" type="range" min="0" max="200" value="100" />
+            <output for="itemFollowStrength">100%</output>
+          </label>
+          <label class="check-row">
+            <input id="itemDepthEnabled" type="checkbox" />
+            <span>深度演出（体パーツ向け）<small>首元が顔に同調し、下へ行くほどしなる。体・胴体画像に</small></span>
+          </label>
+          <label class="control-row">
+            <span>奥行き<small>深いほどしなりが控えめ・ゆったり</small></span>
+            <input id="itemDepth" type="range" min="0" max="100" value="40" />
+            <output for="itemDepth">40%</output>
+          </label>
+          <label class="control-row">
+            <span>サイズ</span>
+            <input id="itemScale" type="range" min="10" max="500" value="100" />
+            <output for="itemScale">100%</output>
+          </label>
+          <label class="control-row">
+            <span>回転</span>
+            <input id="itemRotation" type="range" min="-180" max="180" value="0" />
+            <output for="itemRotation">0°</output>
+          </label>
+          <label class="control-row">
+            <span>X位置</span>
+            <input id="itemX" type="range" min="-3000" max="3000" value="0" />
+            <output for="itemX">0px</output>
+          </label>
+          <label class="control-row">
+            <span>Y位置</span>
+            <input id="itemY" type="range" min="-3000" max="3000" value="0" />
+            <output for="itemY">0px</output>
+          </label>
+          <label class="control-row">
+            <span>不透明度</span>
+            <input id="itemOpacity" type="range" min="10" max="100" value="100" />
+            <output for="itemOpacity">100%</output>
+          </label>
+          <div class="simple-grid">
+            <button id="itemCenterButton" class="ghost-button" type="button">中央へ</button>
+            <button id="itemDuplicateButton" class="ghost-button" type="button">複製</button>
+          </div>
+          <button id="itemDeleteButton" class="ghost-button muted-button danger-button full-width-button" type="button">選択アイテムを削除</button>
+          <button id="itemDeleteAllButton" class="ghost-button muted-button danger-button full-width-button" type="button">追加アイテムを全削除</button>
+          <p class="small-note">キャンバス上でドラッグ移動できます。選択中アイテムの右上◆でサイズ変更できます。</p>
+        </section>
           </div>
           <div class="section-page" data-section-page="output" hidden>
-      <section class="panel guide-panel is-basic-panel" id="obsPanel">
-        <div class="panel-title">
-          <span>OBSに出す</span>
-          <strong>配信用</strong>
-        </div>
-        <p class="small-note">OBS Browser Sourceには固定URLを一度だけ貼ります。プリセット変更は通常画面からOBSへ自動反映されます。</p>
-        <div class="simple-grid obs-preset-grid" aria-label="OBSプリセット">
-          <button class="ghost-button obs-preset-button" type="button" data-obs-preset="light" aria-pressed="true">軽量</button>
-          <button class="ghost-button obs-preset-button muted-button" type="button" data-obs-preset="standard" aria-pressed="false">標準</button>
-          <button class="ghost-button obs-preset-button muted-button" type="button" data-obs-preset="high" aria-pressed="false">高品質</button>
-        </div>
-        <p id="obsPresetHint" class="small-note">選択中: 軽量 / OBS 960x540 / 表示30fps / 送信20fps</p>
-        <button id="copyObsUrlButton" class="ghost-button full-width-button" type="button">OBS用URLをコピー</button>
-        <button id="pushObsSnapshotButton" class="ghost-button full-width-button" type="button">現在のキャラをOBSへ反映</button>
-        <button id="obsPublishButton" class="ghost-button full-width-button" type="button" aria-pressed="false">OBS連携 OFF</button>
-        <p id="obsUrlPreview" class="small-note code-note">http://127.0.0.1:8223/?mode=obs&amp;transparent=1</p>
-        <p id="obsStatus" class="small-note">軽量はOBS Browser Source 幅960 / 高さ540 / FPS30推奨です。通常画面を開いたままOBS連携ONにすると口パク・顔向きを送信します。</p>
-      </section>
+        <header class="section-head">
+          <h2>OBS・保存</h2>
+          <p>配信ソフトへの表示と、キャラのバックアップ。</p>
+        </header>
+        <section class="panel guide-panel is-basic-panel" id="obsPanel">
+          <div class="panel-title">
+            <span>OBSに出す</span>
+            <strong>配信用</strong>
+          </div>
+          <p class="small-note">OBS Browser Sourceには固定URLを一度だけ貼ります。プリセット変更は通常画面からOBSへ自動反映されます。</p>
+          <div class="segmented" role="group" aria-label="OBSプリセット">
+            <button class="obs-preset-button" type="button" data-obs-preset="light" aria-pressed="true">軽量</button>
+            <button class="obs-preset-button" type="button" data-obs-preset="standard" aria-pressed="false">標準</button>
+            <button class="obs-preset-button" type="button" data-obs-preset="high" aria-pressed="false">高品質</button>
+          </div>
+          <p id="obsPresetHint" class="small-note">選択中: 軽量 / OBS 960x540 / 表示30fps / 送信20fps</p>
+          <div class="url-row">
+            <p id="obsUrlPreview" class="small-note code-note">http://127.0.0.1:8223/?mode=obs&amp;transparent=1</p>
+            <button id="copyObsUrlButton" class="primary-button" type="button">コピー</button>
+          </div>
+          <div class="simple-grid">
+            <button id="pushObsSnapshotButton" class="ghost-button" type="button">現在のキャラをOBSへ反映</button>
+            <button id="obsPublishButton" class="ghost-button" type="button" aria-pressed="false">OBS連携 OFF</button>
+          </div>
+          <p id="obsStatus" class="small-note">軽量はOBS Browser Source 幅960 / 高さ540 / FPS30推奨です。通常画面を開いたままOBS連携ONにすると口パク・顔向きを送信します。</p>
+        </section>
 
-      <section class="panel guide-panel is-basic-panel" id="allSettingsPanel">
-        <div class="panel-title">
-          <span>アバターファイル</span>
-          <strong>保存・読込</strong>
-        </div>
-        <p class="small-note">キャラPNG、調整値、背景色、髪色、瞳位置、ハイライト位置、ワープ編集、PNGアイテム、OBSプリセットを .purupuru ファイルにまとめて保存・読み込みします。顔向き・可動範囲・顔の立体感と、PNGアイテムの位置/サイズ/回転/不透明度も含まれます。</p>
-        <div class="simple-grid">
-          <button id="savePuruPuruButton" class="ghost-button" type="button">.purupuru 保存</button>
-          <button id="loadPuruPuruButton" class="ghost-button muted-button" type="button">このキャラを置き換え</button>
-        </div>
-        <p class="small-note">保存・読み込みは .purupuru 形式に統一しました。</p>
-        <input id="allSettingsFileInput" type="file" accept=".purupuru,application/zip,application/x-zip-compressed" hidden />
-      </section>
+        <section class="panel guide-panel is-basic-panel" id="allSettingsPanel">
+          <div class="panel-title">
+            <span>キャラをファイルに保存</span>
+            <strong>保存・読込</strong>
+          </div>
+          <p class="small-note">キャラPNG、調整値、背景色、髪色、瞳位置、ハイライト位置、ワープ編集、PNGアイテム、OBSプリセットを .purupuru ファイルにまとめて保存・読み込みします。顔向き・可動範囲・顔の立体感と、PNGアイテムの位置/サイズ/回転/不透明度も含まれます。</p>
+          <div class="simple-grid">
+            <button id="savePuruPuruButton" class="primary-button" type="button">.purupuru 保存</button>
+            <button id="loadPuruPuruButton" class="ghost-button muted-button" type="button">このキャラを置き換え</button>
+          </div>
+          <input id="allSettingsFileInput" type="file" accept=".purupuru,application/zip,application/x-zip-compressed" hidden />
+        </section>
           </div>
           <div class="section-page" data-section-page="advanced" hidden>
-      <section class="panel is-advanced-panel">
-        <div class="panel-title">
-          <span>上級者向けワープ編集（β版）</span>
-          <strong>上級者向け</strong>
-        </div>
-        <p class="small-note">形を直接変える上級者向け項目です。この欄のワープ保存/読込はデフォーマ編集だけが対象です。全体の保存は「アバターファイル」の .purupuru 保存を使います。</p>
-        <label class="check-row">
-          <input id="showMesh" type="checkbox" />
-          <span>顔メッシュ目安を表示</span>
-        </label>
-        <button id="editModeButton" class="ghost-button full-width-button" type="button" aria-pressed="false">編集モード OFF</button>
-        <label class="select-row">
-          <span>レイヤー<small>編集するPNG</small></span>
-          <select id="editLayerSelect">
-            <option value="face">顔</option>
-            <option value="frontHair">前髪</option>
-            <option value="backHair">後ろ髪</option>
-          </select>
-        </label>
-        <label class="select-row">
-          <span>キー<small>向きの登録点</small></span>
-          <select id="editKeySelect">
-            <option value="center">正面</option>
-            <option value="left">左</option>
-            <option value="right">右</option>
-            <option value="up">上</option>
-            <option value="down">下</option>
-          </select>
-        </label>
-        <div class="simple-grid">
-          <button id="resetEditKeyButton" class="ghost-button muted-button" type="button">キー初期化</button>
-          <button id="saveDeformerButton" class="ghost-button" type="button">ワープ保存</button>
-        </div>
-        <div class="simple-grid">
-          <button id="loadDeformerButton" class="ghost-button muted-button" type="button">ワープ読込</button>
-          <button id="resetAllDeformersButton" class="ghost-button muted-button danger-button" type="button">全初期化</button>
-        </div>
-        <p id="editStatus" class="small-note">編集モードONで、表示中の格子点をドラッグできます。</p>
-      </section>
+        <header class="section-head">
+          <h2>ワープ編集（上級者向け）</h2>
+          <p>形を直接変える、上級者向けのβ機能です。</p>
+        </header>
+        <section class="panel is-advanced-panel">
+          <label class="check-row">
+            <input id="showMesh" type="checkbox" />
+            <span>顔メッシュ目安を表示</span>
+          </label>
+          <button id="editModeButton" class="ghost-button full-width-button" type="button" aria-pressed="false">編集モード OFF</button>
+          <label class="select-row">
+            <span>レイヤー<small>編集するPNG</small></span>
+            <select id="editLayerSelect">
+              <option value="face">顔</option>
+              <option value="frontHair">前髪</option>
+              <option value="backHair">後ろ髪</option>
+            </select>
+          </label>
+          <label class="select-row">
+            <span>キー<small>向きの登録点</small></span>
+            <select id="editKeySelect">
+              <option value="center">正面</option>
+              <option value="left">左</option>
+              <option value="right">右</option>
+              <option value="up">上</option>
+              <option value="down">下</option>
+            </select>
+          </label>
+          <div class="simple-grid">
+            <button id="saveDeformerButton" class="ghost-button" type="button">ワープ保存</button>
+            <button id="loadDeformerButton" class="ghost-button muted-button" type="button">ワープ読込</button>
+          </div>
+          <div class="simple-grid">
+            <button id="resetEditKeyButton" class="ghost-button muted-button" type="button">キー初期化</button>
+            <button id="resetAllDeformersButton" class="ghost-button muted-button danger-button" type="button">全初期化</button>
+          </div>
+          <p id="editStatus" class="small-note">編集モードONで、表示中の格子点をドラッグできます。この欄のワープ保存/読込はデフォーマ編集だけが対象です。全体の保存は「OBS・保存」の .purupuru 保存を使います。</p>
+        </section>
           </div>
       </div>
     </div>
