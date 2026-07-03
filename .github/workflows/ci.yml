@@ -40,7 +40,12 @@ jobs:
         run: node tests/js_runtime_checks.mjs
 
       - name: Check Python syntax
-        run: python -m py_compile scripts/run_local_server.py
+        run: |
+          python -m py_compile scripts/run_local_server.py
+          python -m py_compile scripts/verify_vendor_checksums.py
+
+      - name: Verify vendored dependency checksums
+        run: python scripts/verify_vendor_checksums.py
 
       - name: Run static tests
         run: python -m unittest tests.test_project_static

@@ -212,6 +212,11 @@
   const MAX_PURUPURU_PACKAGE_SIZE = 80 * 1024 * 1024;
   const MAX_PURUPURU_UNZIPPED_SIZE = 120 * 1024 * 1024;
   const MAX_PURUPURU_ENTRY_COUNT = 256;
+  const MAX_PURUPURU_MANIFEST_JSON_BYTES = 64 * 1024;
+  const MAX_PURUPURU_SETTINGS_JSON_BYTES = 8 * 1024 * 1024;
+  const MAX_THUMBNAIL_BYTES = 512 * 1024;
+  const MAX_THUMBNAIL_EDGE = 1024;
+  const THUMBNAIL_RENDER_MAX_EDGE = 512;
   const ZIP_LOCAL_FILE_HEADER_SIG = 0x04034b50;
   const ZIP_CENTRAL_DIRECTORY_SIG = 0x02014b50;
   const ZIP_END_OF_CENTRAL_DIRECTORY_SIG = 0x06054b50;
@@ -1143,12 +1148,31 @@
     return value;
   }
 
-  function parseSettingsJson(raw) {
-    const parsed = sanitizeImportedJsonValue(JSON.parse(raw));
+  function jsonByteSize(text) {
+    return new Blob([String(text ?? "")]).size;
+  }
+
+  function parseSettingsJson(raw, options = null) {
+    const { maxBytes = MAX_PURUPURU_SETTINGS_JSON_BYTES, label = "設定JSON" } = options || {};
+    const text = String(raw ?? "");
+    if (Number.isFinite(maxBytes) && jsonByteSize(text) > maxBytes) {
+      throw new Error(`${label} が大きすぎます。`);
+    }
+    const parsed = sanitizeImportedJsonValue(JSON.parse(text));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("設定ファイルの形式が正しくありません。");
     }
     return parsed;
+  }
+
+  function parseSettingsJsonBytes(u8, label = "設定JSON", maxBytes = MAX_PURUPURU_SETTINGS_JSON_BYTES) {
+    if (!(u8 instanceof Uint8Array)) {
+      throw new Error(`${label} の形式が正しくありません。`);
+    }
+    if (u8.byteLength > maxBytes) {
+      throw new Error(`${label} が大きすぎます。`);
+    }
+    return parseSettingsJson(u8ToText(u8), { maxBytes, label });
   }
 
   function safeSetJson(key, value, onError) {
@@ -1769,6 +1793,17 @@
     }
   }
 
+  function validateThumbnailU8(u8, name = "サムネイル") {
+    if (!u8 || u8.length > MAX_THUMBNAIL_BYTES) {
+      const maxKbText = Math.floor(MAX_THUMBNAIL_BYTES / 1024);
+      throw new Error(`${name} が大きすぎます。${maxKbText}KB以下のPNGにしてください。`);
+    }
+    const { w, h } = pngU8Dimensions(u8, name);
+    if (w <= 0 || h <= 0 || w > MAX_THUMBNAIL_EDGE || h > MAX_THUMBNAIL_EDGE) {
+      throw new Error(`${name} の寸法が大きすぎます。長辺${MAX_THUMBNAIL_EDGE}px以内のPNGにしてください。`);
+    }
+  }
+
   function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
     return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
   }
@@ -1887,7 +1922,7 @@
     resizeCanvasToAvatarSize(frontHairShadowCompositeCanvas);
     resizeCanvasToAvatarSize(itemDeformFollowCanvas);
     resetGeneratedHighlightCanvases();
-    hairTintCache.clear();
+    clearHairTintCache();
     faceCenterCacheFrame = -1;
     faceDepthAnchorsCacheFrame = -1;
     faceRigMetricsCacheFrame = -1;
@@ -1919,7 +1954,7 @@
     avatarPackageImageVersion += 1;
     imagesReady = true;
     loadError = "";
-    hairTintCache.clear();
+    clearHairTintCache();
     resetMeshRendererAfterAvatarImageChange();
     setStatus("ready");
   }
@@ -2008,7 +2043,7 @@
     const manifestRaw = unzipped["manifest.json"];
     if (!manifestRaw) throw new Error("manifest.json がありません。");
 
-    const manifest = parseSettingsJson(u8ToText(manifestRaw));
+    const manifest = parseSettingsJsonBytes(manifestRaw, "manifest.json", MAX_PURUPURU_MANIFEST_JSON_BYTES);
     if (manifest.format !== "purupuru-avatar-package") {
       throw new Error(".purupuru 形式ではありません。");
     }
@@ -2016,7 +2051,7 @@
     const settingsPath = assertSafePackagePath(manifest.settings || "settings.json");
     const settingsRaw = unzipped[settingsPath];
     if (!settingsRaw) throw new Error("settings.json がありません。");
-    const settingsPayload = parseSettingsJson(u8ToText(settingsRaw));
+    const settingsPayload = parseSettingsJsonBytes(settingsRaw, "settings.json", MAX_PURUPURU_SETTINGS_JSON_BYTES);
     const hydratedSettingsPayload = cloneJsonValue(settingsPayload);
 
     const loadedAvatarImages = {};
@@ -2066,7 +2101,7 @@
       const thumbnailPath = assertSafePackagePath(manifest.thumbnail || "thumbnail.png");
       const thumbnailU8 = unzipped[thumbnailPath];
       if (thumbnailU8) {
-        assertPngU8(thumbnailU8, thumbnailPath);
+        validateThumbnailU8(thumbnailU8, thumbnailPath);
         thumbnailDataUrl = u8ToPngDataUrl(thumbnailU8);
       }
     } catch (error) {
@@ -2203,7 +2238,7 @@
     // 古いファイルは baselineSettings を持たないため null になる（前キャラの baseline を引き継がない）。
     baselineSettings = normalizeBaselineSettings(saved.baselineSettings);
     syncAllSettingControls();
-    hairTintCache.clear();
+    clearHairTintCache();
     clearTimeout(blinkTimer);
     blinkClosed = false;
     if (state.autoBlink) scheduleBlink();
@@ -3456,11 +3491,33 @@
     setEditStatus(error instanceof Error ? error.message : "キャラ管理を初期化できませんでした。");
   }
 
+  function thumbnailCanvasSize(width, height) {
+    const w = Math.max(1, Math.round(Number(width) || 0));
+    const h = Math.max(1, Math.round(Number(height) || 0));
+    const scale = Math.min(1, THUMBNAIL_RENDER_MAX_EDGE / Math.max(w, h));
+    return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+  }
+
+  async function canvasToThumbnailDataUrl(sourceCanvas, name = "キャラサムネイル") {
+    const sourceWidth = sourceCanvas?.naturalWidth || sourceCanvas?.width || 0;
+    const sourceHeight = sourceCanvas?.naturalHeight || sourceCanvas?.height || 0;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return "";
+    const size = thumbnailCanvasSize(sourceWidth, sourceHeight);
+    const thumbnailCanvas = document.createElement("canvas");
+    thumbnailCanvas.width = size.w;
+    thumbnailCanvas.height = size.h;
+    const thumbnailCtx = thumbnailCanvas.getContext("2d");
+    if (!thumbnailCtx) return "";
+    thumbnailCtx.clearRect(0, 0, size.w, size.h);
+    thumbnailCtx.drawImage(sourceCanvas, 0, 0, size.w, size.h);
+    const dataUrl = await canvasToPngDataUrl(thumbnailCanvas, name);
+    validateThumbnailU8(dataUrlToU8(dataUrl), name);
+    return dataUrl;
+  }
+
   async function captureCharacterThumbnailDataUrl() {
     if (!canvas?.toBlob) return "";
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return "";
-    return blobToDataUrl(blob);
+    return canvasToThumbnailDataUrl(canvas, "キャラサムネイル");
   }
 
   async function buildAvatarCompositeThumbnailDataUrl(loadedImages, name = "キャラサムネイル") {
@@ -3471,16 +3528,19 @@
       Object.values(loadedImages || {})[0];
     if (!face) return "";
     const size = validateAvatarImageSetDimensions(loadedImages);
+    const thumbnailSize = thumbnailCanvasSize(size.w, size.h);
     const canvasElement = document.createElement("canvas");
-    canvasElement.width = size.w;
-    canvasElement.height = size.h;
+    canvasElement.width = thumbnailSize.w;
+    canvasElement.height = thumbnailSize.h;
     const thumbnailCtx = canvasElement.getContext("2d");
-    if (!thumbnailCtx) return blobToDataUrl(await imageToPngBlob(face));
-    thumbnailCtx.clearRect(0, 0, size.w, size.h);
+    if (!thumbnailCtx) return canvasToThumbnailDataUrl(face, name);
+    thumbnailCtx.clearRect(0, 0, thumbnailSize.w, thumbnailSize.h);
     for (const image of [loadedImages.backHair, face, loadedImages.frontHair]) {
-      if (image) thumbnailCtx.drawImage(image, 0, 0, size.w, size.h);
+      if (image) thumbnailCtx.drawImage(image, 0, 0, thumbnailSize.w, thumbnailSize.h);
     }
-    return canvasToPngDataUrl(canvasElement, name);
+    const dataUrl = await canvasToPngDataUrl(canvasElement, name);
+    validateThumbnailU8(dataUrlToU8(dataUrl), name);
+    return dataUrl;
   }
 
   function collectItemImageBlobsFromRuntime() {
@@ -5367,7 +5427,14 @@
   function drawingAvatarHistoryEntryBytes(entry) {
     // 新形式は entry.image.imageData、旧形式は entry.image が ImageData。
     const data = entry?.image?.imageData?.data || entry?.image?.data;
-    return data?.byteLength || 0;
+    let bytes = data?.byteLength || 0;
+    const importedImages = Array.isArray(entry?.image?.importedImages)
+      ? entry.image.importedImages
+      : (entry?.image?.importedImage ? [entry.image.importedImage] : []);
+    for (const importedImage of importedImages) {
+      bytes += String(importedImage?.src || "").length;
+    }
+    return bytes;
   }
 
   function enforceDrawingAvatarHistoryBudget(session) {
@@ -6972,7 +7039,7 @@
     state.hairColor = normalizeHexColor(value);
     state.hairTintEnabled = true;
     updateHairColorUi();
-    hairTintCache.clear();
+    clearHairTintCache();
   }
 
   // 色相・明るさをストレートアルファの画素値へ直接適用する。
@@ -7030,9 +7097,24 @@
     targetCtx.putImageData(imageData, 0, 0);
   }
 
+  function releaseHairTintTexture(image) {
+    try {
+      meshRenderer?.releaseTexture?.(image);
+    } catch (error) {
+      console.warn("髪色キャッシュのWebGLテクスチャ解放に失敗しました。", error);
+    }
+  }
+
+  function clearHairTintCache() {
+    for (const image of hairTintCache.values()) releaseHairTintTexture(image);
+    hairTintCache.clear();
+  }
+
   function rememberTintedHairImage(cacheKey, image) {
     if (hairTintCache.size >= HAIR_TINT_CACHE_LIMIT) {
-      hairTintCache.delete(hairTintCache.keys().next().value);
+      const evictKey = hairTintCache.keys().next().value;
+      releaseHairTintTexture(hairTintCache.get(evictKey));
+      hairTintCache.delete(evictKey);
     }
     hairTintCache.set(cacheKey, image);
   }
@@ -9429,8 +9511,18 @@
       return texture;
     }
 
+    function releaseTexture(image) {
+      if (!image || disposed || contextLost || gl.isContextLost?.()) return;
+      const cached = textures.get(image);
+      if (!cached?.texture) return;
+      textures.delete(image);
+      textureSet.delete(cached.texture);
+      gl.deleteTexture(cached.texture);
+    }
+
     return {
       canvas: meshCanvas,
+      releaseTexture,
       dispose() {
         if (disposed) return;
         disposed = true;
@@ -13646,7 +13738,7 @@
     bindRange("hairTintLightness", "hairTintLightness", "%", () => {
       state.hairTintEnabled = true;
       updateHairColorUi();
-      hairTintCache.clear();
+      clearHairTintCache();
       updateChangedBadgeForControl("hairTintEnabled");
     });
     bindRange("tearLensStrength", "tearLensStrength");
@@ -13830,7 +13922,7 @@
       state.hairTintLightness = 0;
       setRangeControlValue("hairTintLightness", state.hairTintLightness);
       updateHairColorUi();
-      hairTintCache.clear();
+      clearHairTintCache();
       updateChangedBadgeForControl("hairTintEnabled");
       updateChangedBadgeForControl("hairColor");
       updateChangedBadgeForControl("hairTintLightness");

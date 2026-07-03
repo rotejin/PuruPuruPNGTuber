@@ -142,6 +142,10 @@ const definitions = [
   extractConst("MAX_PURUPURU_PACKAGE_SIZE"),
   extractConst("MAX_PURUPURU_UNZIPPED_SIZE"),
   extractConst("MAX_PURUPURU_ENTRY_COUNT"),
+  extractConst("MAX_PURUPURU_MANIFEST_JSON_BYTES"),
+  extractConst("MAX_PURUPURU_SETTINGS_JSON_BYTES"),
+  extractConst("MAX_THUMBNAIL_BYTES"),
+  extractConst("MAX_THUMBNAIL_EDGE"),
   extractConst("ZIP_LOCAL_FILE_HEADER_SIG"),
   extractConst("ZIP_CENTRAL_DIRECTORY_SIG"),
   extractConst("ZIP_END_OF_CENTRAL_DIRECTORY_SIG"),
@@ -149,7 +153,9 @@ const definitions = [
   extractConst("ZIP_STORE_METHOD"),
   extractConst("AVATAR_PACKAGE_ASSETS"),
   extractFunction("function sanitizeImportedJsonValue("),
+  extractFunction("function jsonByteSize("),
   extractFunction("function parseSettingsJson("),
+  extractFunction("function parseSettingsJsonBytes("),
   extractFunction("function textToU8("),
   extractFunction("function u8ToText("),
   "let crc32Table = null;",
@@ -169,6 +175,7 @@ const definitions = [
   extractFunction("function assertPngU8("),
   extractFunction("function pngU8Dimensions("),
   extractFunction("function validateAvatarImageSize("),
+  extractFunction("function validateThumbnailU8("),
   extractFunction("function avatarImageDimensions("),
   extractFunction("function validateAvatarImageDimensions("),
   `async function loadPngImageFromU8(u8, name = "PNG") {
@@ -295,6 +302,8 @@ assert.equal(
 expectThrow(() => sanitizeImportedJsonValue(PNG_DATA_URL_PREFIX + "A".repeat(MAX_JSON_DATA_URL_STRING_LENGTH + 1)), /文字列/);
 const manyNodes = Array.from({ length: MAX_JSON_ARRAY_LENGTH }, () => Array.from({ length: 26 }, () => 0));
 expectThrow(() => sanitizeImportedJsonValue(manyNodes), /要素数/);
+expectThrow(() => parseSettingsJson('{"x":1}'.padEnd(MAX_PURUPURU_SETTINGS_JSON_BYTES + 1, " ")), /大きすぎ/);
+expectThrow(() => parseSettingsJsonBytes(textToU8("{}".padEnd(MAX_PURUPURU_MANIFEST_JSON_BYTES + 1, " ")), "manifest.json", MAX_PURUPURU_MANIFEST_JSON_BYTES), /大きすぎ/);
 
 const pngUrl = PNG_DATA_URL_PREFIX + PNG_BASE64_SIGNATURE + "AAAA";
 assert.equal(validatePngDataUrl(pngUrl, "PNG"), pngUrl);
@@ -302,6 +311,8 @@ expectThrow(() => validatePngDataUrl("data:text/plain;base64,AAAA", "PNG"), /PNG
 expectThrow(() => validatePngDataUrl(PNG_DATA_URL_PREFIX + "AAAA", "PNG"), /PNG/);
 expectThrow(() => validatePngDataUrl(pngUrl, "PNG", 12), /大きすぎ/);
 assert.deepEqual(pngU8Dimensions(tinyPngBytes(320, 240), "PNG"), { w: 320, h: 240 });
+validateThumbnailU8(tinyPngBytes(320, 240), "thumbnail.png");
+expectThrow(() => validateThumbnailU8(tinyPngBytes(MAX_THUMBNAIL_EDGE + 1, 1), "thumbnail.png"), /寸法/);
 expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE + 1, h: 1 }, "PNG"), /大きすぎ/);
 expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE, h: MAX_AVATAR_IMAGE_EDGE + 1 }, "PNG"), /大きすぎ/);
 expectThrow(() => pngU8Dimensions(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "PNG"), /PNG/);

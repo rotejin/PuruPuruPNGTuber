@@ -620,6 +620,15 @@ h1 {
   filter: none;
 }
 
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible,
+select:focus-visible,
+input:focus-visible {
+  outline: 3px solid rgba(var(--accent-rgb), 0.36);
+  outline-offset: 2px;
+}
+
 .ghost-button[aria-pressed="true"] {
   color: var(--accent-text);
   background: rgba(var(--accent-rgb), 0.13);
@@ -1149,7 +1158,8 @@ select:focus {
 .drop-zone.is-dragover {
   background: rgba(var(--accent-rgb), 0.08);
   border-color: rgba(var(--accent-rgb), 0.55);
-  outline: none;
+  outline: 3px solid rgba(var(--accent-rgb), 0.24);
+  outline-offset: 2px;
 }
 
 .item-list {

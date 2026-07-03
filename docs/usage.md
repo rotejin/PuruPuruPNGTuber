@@ -248,5 +248,7 @@ node --check app.js
 node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js
 node tests/js_runtime_checks.mjs
 python -m py_compile scripts/run_local_server.py
+python -m py_compile scripts/verify_vendor_checksums.py
+python scripts/verify_vendor_checksums.py
 python -m unittest tests.test_project_static
 ```

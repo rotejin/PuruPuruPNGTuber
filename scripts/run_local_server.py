@@ -147,7 +147,7 @@ def url_hostname(value: str | None) -> str:
 
 class NoCacheHandler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    allowed_extensions = {".html", ".css", ".js", ".json", ".png", ".ico", ".wasm", ".mjs", ".task", ".purupuru", ".woff2"}
+    allowed_extensions = {".html", ".css", ".js", ".json", ".png", ".ico", ".wasm", ".mjs", ".task", ".woff2"}
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".woff2": "font/woff2"}
 
     def handle_one_request(self) -> None:
