@@ -10745,19 +10745,39 @@
     return true;
   }
 
-  function itemLayerDepthOffset(layer) {
-    if (!itemLayerDepthFollowActive(layer) || !layer.depthMotion) return { x: 0, y: 0 };
-    return { x: layer.depthMotion.x, y: layer.depthMotion.y };
-  }
+  let itemDepthHeadVectorCache = null;
+  let itemDepthHeadVectorCacheFrame = -1;
 
   function itemDepthHeadMotionVector() {
+    if (itemDepthHeadVectorCacheFrame === motionFrameId && itemDepthHeadVectorCache) {
+      return itemDepthHeadVectorCache;
+    }
     const center = currentFaceCenter();
     const followed = faceRigidFollowPoint(center.x, center.y);
-    return { x: followed.x - center.x, y: followed.y - center.y };
+    itemDepthHeadVectorCache = { x: followed.x - center.x, y: followed.y - center.y };
+    itemDepthHeadVectorCacheFrame = motionFrameId;
+    return itemDepthHeadVectorCache;
   }
 
-  // 体パーツ向けの深度演出: 顔の動きベクトルを奥行きに応じて減衰させ、
-  // バネ-ダンパーで遅延・揺り戻しを付けたパララックス追従。
+  // 体パーツ向けの深度演出: 首元は顔の動きに同位相で追従し、下へ行くほど
+  // 減衰する「しなり」変形。遅延（バネ）は裾側の小さな残留揺れにのみ使う。
+  function itemDepthWarpPoint(layer, x, y) {
+    const head = itemDepthHeadMotionVector();
+    const motion = layer.depthMotion || head;
+    const depth =
+      clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
+    const rate = lerp(0.55, 0.18, depth);
+    const neckY = currentNeckPivot().y;
+    const span = Math.max(160, (CROP.h - neckY) * 0.85);
+    const w = 1 - smoothstep(neckY, neckY + span, y);
+    const swayX = (motion.x - head.x) * 0.5 * (1 - w);
+    const swayY = (motion.y - head.y) * 0.35 * (1 - w);
+    return {
+      x: x + rate * (head.x * w + swayX),
+      y: y + rate * 0.55 * (head.y * w + swayY),
+    };
+  }
+
   function updateItemDepthMotion(delta) {
     let head = null;
     for (const layer of itemLayers) {
@@ -10768,34 +10788,34 @@
       if (!head) head = itemDepthHeadMotionVector();
       const depth =
         clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
-      // 浅いほど強く追従し、深いほど動きが小さく・ゆっくりになる。
-      const followRate = lerp(0.34, 0.08, depth);
-      const stiffness = lerp(90, 26, depth);
-      const damping = 2 * 0.8 * Math.sqrt(stiffness); // ダンピング比0.8で軽い揺り戻し
-      const motion = layer.depthMotion || (layer.depthMotion = { x: 0, y: 0, vx: 0, vy: 0 });
-      const targetX = head.x * followRate;
-      const targetY = head.y * followRate * 0.85;
+      const stiffness = lerp(70, 26, depth);
+      const damping = 2 * 0.75 * Math.sqrt(stiffness); // ダンピング比0.75で軽い揺り戻し
+      const motion = layer.depthMotion || (layer.depthMotion = { x: head.x, y: head.y, vx: 0, vy: 0 });
       const dt = clamp(delta, 0, 1 / 30);
-      motion.vx += (stiffness * (targetX - motion.x) - damping * motion.vx) * dt;
-      motion.vy += (stiffness * (targetY - motion.y) - damping * motion.vy) * dt;
+      motion.vx += (stiffness * (head.x - motion.x) - damping * motion.vx) * dt;
+      motion.vy += (stiffness * (head.y - motion.y) - damping * motion.vy) * dt;
       motion.x += motion.vx * dt;
       motion.y += motion.vy * dt;
     }
   }
 
   function itemLayerDeformFollowSpec(layer) {
-    if (!layer?.deformFollowEnabled || !itemLayerSupportsDeformFollow(layer)) return null;
-    const slot = itemSlotInfo(layer.slot);
-    const target = slot.deformFollow || slot.rigidFollow;
-    if (target === "face") {
-      const faceSpec = currentFaceMeshSpec();
-      return { warpFn: (x, y) => faceWarpPoint(x, y), cols: faceSpec.cols, rows: faceSpec.rows };
+    if (layer?.deformFollowEnabled && itemLayerSupportsDeformFollow(layer)) {
+      const slot = itemSlotInfo(layer.slot);
+      const target = slot.deformFollow || slot.rigidFollow;
+      if (target === "face") {
+        const faceSpec = currentFaceMeshSpec();
+        return { warpFn: (x, y) => faceWarpPoint(x, y), cols: faceSpec.cols, rows: faceSpec.rows };
+      }
+      if (target === "frontHair") {
+        return { warpFn: (x, y) => hairWarpPoint(x, y, "front"), cols: 14, rows: 10 };
+      }
+      if (target === "backHair") {
+        return { warpFn: (x, y) => hairWarpPoint(x, y, "back"), cols: 14, rows: 10 };
+      }
     }
-    if (target === "frontHair") {
-      return { warpFn: (x, y) => hairWarpPoint(x, y, "front"), cols: 14, rows: 10 };
-    }
-    if (target === "backHair") {
-      return { warpFn: (x, y) => hairWarpPoint(x, y, "back"), cols: 14, rows: 10 };
+    if (itemLayerDepthFollowActive(layer)) {
+      return { warpFn: (x, y) => itemDepthWarpPoint(layer, x, y), cols: 12, rows: 10 };
     }
     return null;
   }
@@ -10829,8 +10849,7 @@
     const deformSpec = itemLayerDeformFollowSpec(layer);
     if (deformSpec) return deformSpec.warpFn(center.x, center.y);
     const offset = itemLayerRigidFollowOffset(layer);
-    const depthOffset = itemLayerDepthOffset(layer);
-    return { x: center.x + offset.x + depthOffset.x, y: center.y + offset.y + depthOffset.y };
+    return { x: center.x + offset.x, y: center.y + offset.y };
   }
 
   function itemLayerRenderedAnchorPoint(layer, anchorPoint) {
@@ -10838,8 +10857,7 @@
     const deformSpec = itemLayerDeformFollowSpec(layer);
     if (deformSpec) return deformSpec.warpFn(anchorPoint.x, anchorPoint.y);
     const offset = itemLayerRigidFollowOffset(layer);
-    const depthOffset = itemLayerDepthOffset(layer);
-    return { x: anchorPoint.x + offset.x + depthOffset.x, y: anchorPoint.y + offset.y + depthOffset.y };
+    return { x: anchorPoint.x + offset.x, y: anchorPoint.y + offset.y };
   }
 
   function itemAnchorPointToStage(layer, anchorPoint) {
@@ -10855,8 +10873,7 @@
     if (!charPoint) return null;
     if (itemLayerDeformFollowSpec(layer)) return charPoint;
     const offset = itemLayerRigidFollowOffset(layer);
-    const depthOffset = itemLayerDepthOffset(layer);
-    return { x: charPoint.x - offset.x - depthOffset.x, y: charPoint.y - offset.y - depthOffset.y };
+    return { x: charPoint.x - offset.x, y: charPoint.y - offset.y };
   }
 
   function itemLayerAnchorToLocal(layer, anchorPoint) {
