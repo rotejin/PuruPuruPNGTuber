@@ -10883,9 +10883,26 @@
     const w = 1 - smoothstep(neckY, neckY + span, y);
     const swayX = (motion.x - head.x) * 0.5 * (1 - w);
     const swayY = (motion.y - head.y) * 0.35 * (1 - w);
+
+    // 呼吸の体への伝播: 頭の呼吸バウンスから少し遅れて肩が上下し、
+    // 吸気で胸元がわずかに横へ膨らむ。強さは既存の「呼吸」スライダーに連動。
+    const breathAmt = state.breathStrength / 100;
+    let breathLiftY = 0;
+    let breathExpandX = 0;
+    if (breathAmt > 0.001) {
+      const breath = Math.sin(TAU * (animationSeconds * 0.18 - 0.05)); // 全体の呼吸より約0.3秒遅れ
+      const liftMask = 1 - smoothstep(neckY, CROP.h, y);
+      breathLiftY = -breath * 2.4 * breathAmt * liftMask;
+      const chestBand = smoothstep(neckY, neckY + 120, y) * (1 - smoothstep(neckY + 120, neckY + span, y));
+      const center = itemLayerCenter(layer);
+      const halfW = (imageSize(layer.image).w * Math.max(0.001, layer.scale / 100)) / 2;
+      const dxn = clamp((x - center.x) / Math.max(1, halfW), -1, 1);
+      breathExpandX = breath * 5 * breathAmt * dxn * chestBand;
+    }
+
     return {
-      x: x + rate * (head.x * w + swayX),
-      y: y + rate * 0.55 * (head.y * w + swayY),
+      x: x + rate * (head.x * w + swayX) + breathExpandX,
+      y: y + rate * 0.55 * (head.y * w + swayY) + breathLiftY,
     };
   }
 
