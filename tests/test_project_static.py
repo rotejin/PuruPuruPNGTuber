@@ -5,7 +5,9 @@ from pathlib import Path
 from functools import partial
 from collections import Counter
 from http.client import HTTPConnection
+from contextlib import redirect_stderr
 import hashlib
+import io
 import json
 import re
 import socket
@@ -705,6 +707,17 @@ class ProjectStaticTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_local_server_timeout_before_request_path_is_quiet(self) -> None:
+        handler = NoCacheHandler.__new__(NoCacheHandler)
+        handler.client_address = ("127.0.0.1", 0)
+        handler.requestline = ""
+
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            handler.log_message("Request timed out: %r", TimeoutError("timed out"))
+
+        self.assertEqual(stderr.getvalue(), "")
 
     def test_local_server_sse_runtime_normal_path(self) -> None:
         server, thread = self.start_local_test_server()

@@ -375,7 +375,9 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         super().do_HEAD()
 
     def log_message(self, format: str, *args) -> None:
-        request_path = urlsplit(self.path).path
+        request_path = urlsplit(getattr(self, "path", "") or "").path
+        if not request_path and format.startswith("Request timed out"):
+            return
         if request_path in {"/api/obs/input", "/api/obs/events"}:
             return
         super().log_message(format, *args)
