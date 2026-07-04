@@ -1,6 +1,6 @@
 64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff  face_landmarker/float16/face_landmarker.task
 5c96247445e57a2d087758114b116fed7d46eb401342aee19b1acc56d36fe707  tasks-vision/0.10.35/package.json
-3825dba564fc06720dc0934b72a22711ac6b7491ae8662e573ac205699ea016b  tasks-vision/0.10.35/vision.d.ts
+c2bb7216c309fbc51b1eccd56efb9de3da0db09240e607c19d1eff5c164eadff  tasks-vision/0.10.35/vision.d.ts
 55d7ab624fbb70dcc5adc4ae6d7ea9cfcb569139d3dbfbf2b1deafcb966bc0fe  tasks-vision/0.10.35/vision_bundle.mjs
 e7fd9858e8e8f221d9b96eddc11f8e077f263e0b7bbd79d3cbe882b134274f8c  tasks-vision/0.10.35/wasm/vision_wasm_internal.js
 6a5c64584c2ab61c763b6e204afbdbc7ce1caf7f5216187322bca8df94f646bc  tasks-vision/0.10.35/wasm/vision_wasm_internal.wasm
