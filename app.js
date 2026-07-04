@@ -93,6 +93,7 @@
   const DRAWING_AVATAR_CANVAS_HEIGHT = 1536;
   const DRAWING_AVATAR_MAX_ITEM_LAYERS = 8;
   const DRAWING_AVATAR_MAX_HISTORY = 30;
+  const DRAWING_AVATAR_MAX_HISTORY_BYTES = 96 * 1024 * 1024; // undo+redo 合計のフルキャンバス snapshot 保持量の上限（メモリ膨張の抑制）。
   const DRAWING_AVATAR_ONION_ALPHA = 0.35;
   const DRAWING_AVATAR_FILL_TOLERANCE = 12;
   // 目・口は「開き」の初期表示に合わせて、閉じ・中間・開けの差分レイヤーを最初はミュートにする。
@@ -160,8 +161,10 @@
   const ALL_SETTINGS_STORAGE_KEY = "purupuru-pngtuber-all-settings-v1";
   // control-group廃止で未使用（Phase 2）。旧アコーディオン開閉状態の保存に使われていた。
   // const UI_STATE_STORAGE_KEY = "move-avatar-ui-state-v6";
+  // Phase 2: ナビレール一本化に伴い旧2階層タブは廃止。以下2つは移行読取専用で残す。
   const WORKSPACE_STORAGE_KEY = "purupuru-workspace-v1";
   const ADJUST_CATEGORY_STORAGE_KEY = "purupuru-adjust-category-v1";
+  const SECTION_STORAGE_KEY = "purupuru-section-v1";
 
   // Phase 4: baseline 基準値・変更済み表示
   let baselineSettings = null;
@@ -174,7 +177,7 @@
     mouth: ["micGain", "mouthHalf", "mouthFull", "mouthRelease", "mouthCrossfadeMs", "pyokoStrength"],
     eyes: ["highlightEnabled", "highlightStrength", "highlightSize", "highlightAspect", "highlightFilmWobble", "subHighlightEnabled", "subHighlightSize", "subHighlightAspect", "subHighlightFilmWobble", "tearLensEnabled", "tearLensStrength", "tearLensRadiusX", "tearLensRadiusY", "tearLensRotationLeft", "tearLensRotationRight"],
     hair: ["hairVisible", "hairWarp", "hairSpring", "hairBundleStrength"],
-    look: ["frontHairShadowEnabled", "frontHairShadowStrength", "frontHairShadowDistance", "bgColor", "hairColor", "hairTintLightness", "hairTintEnabled"],
+    look: ["frontHairShadowEnabled", "frontHairShadowStrength", "frontHairShadowDistance", "neckShadowEnabled", "neckShadowStrength", "neckShadowDistance", "bgColor", "hairColor", "hairTintLightness", "hairTintEnabled"],
   };
   // キャラ1（assets/demo-avatar/default-settings.json）を基準にした共通リグ値。
   // 顔の横向き変形と髪デフォーマの比率がキャラごとに変わると、髪だけ追従しない/顔だけ滑るため、
@@ -209,6 +212,11 @@
   const MAX_PURUPURU_PACKAGE_SIZE = 80 * 1024 * 1024;
   const MAX_PURUPURU_UNZIPPED_SIZE = 120 * 1024 * 1024;
   const MAX_PURUPURU_ENTRY_COUNT = 256;
+  const MAX_PURUPURU_MANIFEST_JSON_BYTES = 64 * 1024;
+  const MAX_PURUPURU_SETTINGS_JSON_BYTES = 8 * 1024 * 1024;
+  const MAX_THUMBNAIL_BYTES = 512 * 1024;
+  const MAX_THUMBNAIL_EDGE = 1024;
+  const THUMBNAIL_RENDER_MAX_EDGE = 512;
   const ZIP_LOCAL_FILE_HEADER_SIG = 0x04034b50;
   const ZIP_CENTRAL_DIRECTORY_SIG = 0x02014b50;
   const ZIP_END_OF_CENTRAL_DIRECTORY_SIG = 0x06054b50;
@@ -258,6 +266,8 @@
     opacity: 100,
     followStrength: 100,
     deformFollowEnabled: false,
+    depthEnabled: false,
+    depth: 40,
     visible: true,
     locked: false,
   };
@@ -268,6 +278,7 @@
     y: { min: -3000, max: 3000 },
     opacity: { min: 10, max: 100 },
     followStrength: { min: 0, max: 200 },
+    depth: { min: 0, max: 100 },
   };
   const ITEM_HIT_ORDER = ["stageFront", "frontHairFront", "faceFront", "faceBack", "characterBack", "stageBack"];
   const ALL_SETTINGS_NUMERIC_KEYS = [
@@ -282,6 +293,8 @@
     "hairBundleStrength",
     "frontHairShadowStrength",
     "frontHairShadowDistance",
+    "neckShadowStrength",
+    "neckShadowDistance",
     "followSpeed",
     "rangeLeft",
     "rangeRight",
@@ -319,6 +332,7 @@
     "tearLensEnabled",
     "hairVisible",
     "frontHairShadowEnabled",
+    "neckShadowEnabled",
     "hairTintEnabled",
     "showMesh",
     "autoBlink",
@@ -348,6 +362,7 @@
     highlightSize: "px",
     subHighlightSize: "px",
     frontHairShadowDistance: "px",
+    neckShadowDistance: "px",
     tearLensRadiusX: "px",
     tearLensRadiusY: "px",
     tearLensRotationLeft: "°",
@@ -377,6 +392,8 @@
     hairBundleStrength: 100,
     frontHairShadowStrength: 28,
     frontHairShadowDistance: 10,
+    neckShadowStrength: 30,
+    neckShadowDistance: 12,
     followSpeed: 60,
     rangeLeft: 60,
     rangeRight: 60,
@@ -405,6 +422,7 @@
     tearLensRotationLeft: 0,
     tearLensRotationRight: 0,
     frontHairShadowEnabled: true,
+    neckShadowEnabled: true,
     eyeSetupMode: false,
     highlightSetupMode: false,
     faceDepthSetupMode: false,
@@ -501,6 +519,7 @@
     characterWizardPanel: document.querySelector("#characterWizardPanel"),
     characterWizardStartButton: document.querySelector("#characterWizardStartButton"),
     characterWizardStepText: document.querySelector("#characterWizardStepText"),
+    characterWizardProgressFill: document.querySelector("#characterWizardProgressFill"),
     characterWizardTitle: document.querySelector("#characterWizardTitle"),
     characterWizardDescription: document.querySelector("#characterWizardDescription"),
     characterWizardStatus: document.querySelector("#characterWizardStatus"),
@@ -519,6 +538,7 @@
     characterWizardMoveUpButton: document.querySelector("#characterWizardMoveUpButton"),
     characterWizardMoveDownButton: document.querySelector("#characterWizardMoveDownButton"),
     drawingAvatarStartButton: document.querySelector("#drawingAvatarStartButton"),
+    addCharacterFromStartButton: document.querySelector("#addCharacterFromStartButton"),
     drawingAvatarMenuButton: document.querySelector("#drawingAvatarMenuButton"),
     drawingAvatarPanel: document.querySelector("#drawingAvatarPanel"),
     drawingAvatarStatus: document.querySelector("#drawingAvatarStatus"),
@@ -568,6 +588,8 @@
     itemSlotSelect: document.querySelector("#itemSlotSelect"),
     itemDeformFollowEnabled: document.querySelector("#itemDeformFollowEnabled"),
     itemFollowStrength: document.querySelector("#itemFollowStrength"),
+    itemDepthEnabled: document.querySelector("#itemDepthEnabled"),
+    itemDepth: document.querySelector("#itemDepth"),
     itemScale: document.querySelector("#itemScale"),
     itemRotation: document.querySelector("#itemRotation"),
     itemX: document.querySelector("#itemX"),
@@ -629,6 +651,7 @@
     highlightEnabled: document.querySelector("#highlightEnabled"),
     hairVisible: document.querySelector("#hairVisible"),
     frontHairShadowEnabled: document.querySelector("#frontHairShadowEnabled"),
+    neckShadowEnabled: document.querySelector("#neckShadowEnabled"),
     subHighlightEnabled: document.querySelector("#subHighlightEnabled"),
     subHighlightControls: document.querySelector("#subHighlightControls"),
     highlightSetupButton: document.querySelector("#highlightSetupButton"),
@@ -795,6 +818,8 @@
   let faceRigMetricsCacheDepthSource = null;
   let faceRigMetricsCacheEyesSource = null;
   let faceRigMetricsCache = null;
+  let faceMeshSpecCacheFrame = -1;
+  const faceMeshSpecCache = { warpFn: null, cols: 14, rows: 10 };
   let neckPivotCacheFrame = -1;
   let neckPivotCacheSource = null;
   let neckPivotCacheDepthSource = null;
@@ -1125,12 +1150,31 @@
     return value;
   }
 
-  function parseSettingsJson(raw) {
-    const parsed = sanitizeImportedJsonValue(JSON.parse(raw));
+  function jsonByteSize(text) {
+    return new Blob([String(text ?? "")]).size;
+  }
+
+  function parseSettingsJson(raw, options = null) {
+    const { maxBytes = MAX_PURUPURU_SETTINGS_JSON_BYTES, label = "設定JSON" } = options || {};
+    const text = String(raw ?? "");
+    if (Number.isFinite(maxBytes) && jsonByteSize(text) > maxBytes) {
+      throw new Error(`${label} が大きすぎます。`);
+    }
+    const parsed = sanitizeImportedJsonValue(JSON.parse(text));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new Error("設定ファイルの形式が正しくありません。");
     }
     return parsed;
+  }
+
+  function parseSettingsJsonBytes(u8, label = "設定JSON", maxBytes = MAX_PURUPURU_SETTINGS_JSON_BYTES) {
+    if (!(u8 instanceof Uint8Array)) {
+      throw new Error(`${label} の形式が正しくありません。`);
+    }
+    if (u8.byteLength > maxBytes) {
+      throw new Error(`${label} が大きすぎます。`);
+    }
+    return parseSettingsJson(u8ToText(u8), { maxBytes, label });
   }
 
   function safeSetJson(key, value, onError) {
@@ -1172,7 +1216,7 @@
     })) {
       return false;
     }
-    setEditStatus("ワープ編集だけをブラウザ内に保存しました。全体のバックアップは .purupuru 保存を使います。");
+    setEditStatus("ワープ編集だけをブラウザ内に保存しました。全体のバックアップは画像込み .purupuru 保存を使います。");
     return true;
   }
 
@@ -1441,9 +1485,15 @@
       if (data.length > 0xffffffff) {
         throw new Error(`ZIP内ファイルが大きすぎます: ${safePath}`);
       }
+      const nameBytes = textToU8(safePath);
+      if (nameBytes.length > 0xffff) {
+        // ローカル/セントラルヘッダのファイル名長は16bit。超過すると
+        // setUint16 が下位16bitのみ書き込み、壊れたZIPをサイレント出力してしまう。
+        throw new Error(`ZIP内のパス名が長すぎます: ${safePath}`);
+      }
       return {
         path: safePath,
-        nameBytes: textToU8(safePath),
+        nameBytes,
         data,
         crc: crc32(data),
       };
@@ -1519,8 +1569,9 @@
 
   function findZipEndOfCentralDirectory(zipU8) {
     const min = Math.max(0, zipU8.length - 22 - 0xffff);
+    const view = new DataView(zipU8.buffer, zipU8.byteOffset, zipU8.byteLength);
     for (let i = zipU8.length - 22; i >= min; i -= 1) {
-      if (new DataView(zipU8.buffer, zipU8.byteOffset + i, 4).getUint32(0, true) === ZIP_END_OF_CENTRAL_DIRECTORY_SIG) {
+      if (view.getUint32(i, true) === ZIP_END_OF_CENTRAL_DIRECTORY_SIG) {
         return i;
       }
     }
@@ -1725,8 +1776,44 @@
     return { w, h };
   }
 
+  function validateItemImageU8(u8, name = "PNGアイテム") {
+    // ファイルピッカー経由（MAX_ITEM_IMAGE_FILE_SIZE + validateItemImageDimensions）と
+    // 上限を揃えるため、.purupuru パッケージ内アイテムもデコード前に検証する。
+    if (u8.length > MAX_ITEM_IMAGE_FILE_SIZE) {
+      const maxMbText = Math.floor(MAX_ITEM_IMAGE_FILE_SIZE / (1024 * 1024));
+      throw new Error(`${name} のファイルサイズが大きすぎます。${maxMbText}MB以下のPNGにしてください。`);
+    }
+    const { w, h } = pngU8Dimensions(u8, name);
+    if (
+      w <= 0 ||
+      h <= 0 ||
+      w > MAX_ITEM_IMAGE_EDGE ||
+      h > MAX_ITEM_IMAGE_EDGE ||
+      w * h > MAX_ITEM_IMAGE_PIXELS
+    ) {
+      const maxPixelsText = `${Math.floor(MAX_ITEM_IMAGE_PIXELS / 10000)}万`;
+      throw new Error(`${name} は画像サイズが大きすぎます。長辺${MAX_ITEM_IMAGE_EDGE}px以内・合計${maxPixelsText}画素以内のPNGにしてください。`);
+    }
+  }
+
+  function validateThumbnailU8(u8, name = "サムネイル") {
+    if (!u8 || u8.length > MAX_THUMBNAIL_BYTES) {
+      const maxKbText = Math.floor(MAX_THUMBNAIL_BYTES / 1024);
+      throw new Error(`${name} が大きすぎます。${maxKbText}KB以下のPNGにしてください。`);
+    }
+    const { w, h } = pngU8Dimensions(u8, name);
+    if (w <= 0 || h <= 0 || w > MAX_THUMBNAIL_EDGE || h > MAX_THUMBNAIL_EDGE) {
+      throw new Error(`${name} の寸法が大きすぎます。長辺${MAX_THUMBNAIL_EDGE}px以内のPNGにしてください。`);
+    }
+  }
+
   function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
-    return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
+    const baseUrl = new URL(settingsUrl, window.location.href);
+    const assetUrl = new URL(String(path || ""), baseUrl);
+    if (assetUrl.origin !== window.location.origin) {
+      throw new Error("設定内PNGアイテムは同一オリジンのパスだけ対応しています。");
+    }
+    return assetUrl.href;
   }
 
   async function fetchPngDataUrl(path, name = "PNGアイテム", settingsUrl = DEFAULT_SETTINGS_URL) {
@@ -1843,10 +1930,11 @@
     resizeCanvasToAvatarSize(frontHairShadowCompositeCanvas);
     resizeCanvasToAvatarSize(itemDeformFollowCanvas);
     resetGeneratedHighlightCanvases();
-    hairTintCache.clear();
+    clearHairTintCache();
     faceCenterCacheFrame = -1;
     faceDepthAnchorsCacheFrame = -1;
     faceRigMetricsCacheFrame = -1;
+    faceMeshSpecCacheFrame = -1;
     neckPivotCacheFrame = -1;
     return true;
   }
@@ -1875,7 +1963,7 @@
     avatarPackageImageVersion += 1;
     imagesReady = true;
     loadError = "";
-    hairTintCache.clear();
+    clearHairTintCache();
     resetMeshRendererAfterAvatarImageChange();
     setStatus("ready");
   }
@@ -1944,7 +2032,7 @@
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
       tryRememberAllSettingsPayload(buildAllSettingsPayload({ includeItemImages: false }));
-      setEditStatus(".purupuru ファイルを書き出しました。キャラPNGとPNGアイテムも含まれます。");
+      setEditStatus(".purupuru ファイルを書き出しました。キャラPNG、PNGアイテム、調整値を画像込みで保存しました。");
       return true;
     } catch (error) {
       console.warn(".purupuru 保存に失敗しました。", error);
@@ -1964,7 +2052,7 @@
     const manifestRaw = unzipped["manifest.json"];
     if (!manifestRaw) throw new Error("manifest.json がありません。");
 
-    const manifest = parseSettingsJson(u8ToText(manifestRaw));
+    const manifest = parseSettingsJsonBytes(manifestRaw, "manifest.json", MAX_PURUPURU_MANIFEST_JSON_BYTES);
     if (manifest.format !== "purupuru-avatar-package") {
       throw new Error(".purupuru 形式ではありません。");
     }
@@ -1972,7 +2060,7 @@
     const settingsPath = assertSafePackagePath(manifest.settings || "settings.json");
     const settingsRaw = unzipped[settingsPath];
     if (!settingsRaw) throw new Error("settings.json がありません。");
-    const settingsPayload = parseSettingsJson(u8ToText(settingsRaw));
+    const settingsPayload = parseSettingsJsonBytes(settingsRaw, "settings.json", MAX_PURUPURU_SETTINGS_JSON_BYTES);
     const hydratedSettingsPayload = cloneJsonValue(settingsPayload);
 
     const loadedAvatarImages = {};
@@ -1998,12 +2086,19 @@
 
     const itemImageBlobs = {};
     if (Array.isArray(settingsPayload.itemLayers)) {
-      hydratedSettingsPayload.itemLayers = settingsPayload.itemLayers.map((layer, index) => {
+      const cappedItemLayers = settingsPayload.itemLayers.slice(0, MAX_ITEM_LAYER_COUNT);
+      settingsPayload.itemLayers = cappedItemLayers;
+      let itemImageBytesTotal = 0;
+      hydratedSettingsPayload.itemLayers = cappedItemLayers.map((layer, index) => {
         if (!layer || typeof layer !== "object" || !layer.file) return layer;
         const itemPath = assertSafePackagePath(layer.file);
         const itemU8 = unzipped[itemPath];
         if (!itemU8) return layer;
-        assertPngU8(itemU8, itemPath);
+        validateItemImageU8(itemU8, itemPath);
+        itemImageBytesTotal += itemU8.length;
+        if (itemImageBytesTotal > MAX_PURUPURU_UNZIPPED_SIZE) {
+          throw new Error("PNGアイテムの合計が大きすぎます。");
+        }
         const id = String(layer.id ?? index + 1);
         itemImageBlobs[id] = {
           blob: pngU8ToBlob(itemU8),
@@ -2022,7 +2117,7 @@
       const thumbnailPath = assertSafePackagePath(manifest.thumbnail || "thumbnail.png");
       const thumbnailU8 = unzipped[thumbnailPath];
       if (thumbnailU8) {
-        assertPngU8(thumbnailU8, thumbnailPath);
+        validateThumbnailU8(thumbnailU8, thumbnailPath);
         thumbnailDataUrl = u8ToPngDataUrl(thumbnailU8);
       }
     } catch (error) {
@@ -2159,7 +2254,7 @@
     // 古いファイルは baselineSettings を持たないため null になる（前キャラの baseline を引き継がない）。
     baselineSettings = normalizeBaselineSettings(saved.baselineSettings);
     syncAllSettingControls();
-    hairTintCache.clear();
+    clearHairTintCache();
     clearTimeout(blinkTimer);
     blinkClosed = false;
     if (state.autoBlink) scheduleBlink();
@@ -2220,6 +2315,8 @@
       ui.itemSlotSelect,
       ui.itemDeformFollowEnabled,
       ui.itemFollowStrength,
+      ui.itemDepthEnabled,
+      ui.itemDepth,
       ui.itemScale,
       ui.itemRotation,
       ui.itemX,
@@ -2249,6 +2346,8 @@
       opacity: layer.opacity,
       followStrength: layer.followStrength,
       deformFollowEnabled: Boolean(layer.deformFollowEnabled),
+      depthEnabled: Boolean(layer.depthEnabled),
+      depth: layer.depth,
       visible: Boolean(layer.visible),
       locked: Boolean(layer.locked),
     };
@@ -2579,6 +2678,7 @@
         itemSlotInfo(layer.slot).label,
         `${Math.round(layer.scale)}%`,
         layer.deformFollowEnabled && itemLayerSupportsDeformFollow(layer) ? "変形連動" : null,
+        itemLayerDepthFollowActive(layer) ? "深度演出" : null,
         layer.visible ? null : "非表示",
         layer.locked ? "ロック中" : null,
       ].filter(Boolean).join(" / ");
@@ -2645,6 +2745,17 @@
         itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !canRigidFollow || deformFollowActive;
     }
     setRangeControlValue("itemFollowStrength", Math.round(layer.followStrength));
+    const canDepthFollow = Boolean(activeLayer && itemLayerSupportsDepthFollow(layer));
+    const depthFollowActive = Boolean(layer.depthEnabled && canDepthFollow && !deformFollowActive);
+    if (ui.itemDepthEnabled) {
+      ui.itemDepthEnabled.checked = depthFollowActive;
+      ui.itemDepthEnabled.disabled =
+        itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !canDepthFollow || deformFollowActive;
+    }
+    if (ui.itemDepth) {
+      ui.itemDepth.disabled = itemMutationActive || !activeLayer || Boolean(activeLayer.locked) || !depthFollowActive;
+    }
+    setRangeControlValue("itemDepth", Math.round(layer.depth));
     setRangeControlValue("itemScale", Math.round(layer.scale));
     setRangeControlValue("itemRotation", Math.round(layer.rotation), "°");
     setRangeControlValue("itemX", Math.round(layer.x), "px");
@@ -2720,6 +2831,7 @@
       x: Math.round(clamp(source.x + 28, -3000, 3000)),
       y: Math.round(clamp(source.y + 28, -3000, 3000)),
       locked: false,
+      depthMotion: null,
     };
     itemLayers.splice(sourceIndex + 1, 0, layer);
     nextItemLayerId += 1;
@@ -2770,6 +2882,13 @@
         ITEM_LAYER_LIMITS.followStrength.max
       ),
       deformFollowEnabled: Boolean(layerData?.deformFollowEnabled),
+      depthEnabled: Boolean(layerData?.depthEnabled),
+      depth: normalizeItemNumber(
+        layerData?.depth,
+        ITEM_LAYER_DEFAULTS.depth,
+        ITEM_LAYER_LIMITS.depth.min,
+        ITEM_LAYER_LIMITS.depth.max
+      ),
       visible: layerData?.visible !== false,
       locked: Boolean(layerData?.locked),
     };
@@ -3073,7 +3192,7 @@
     const ratio = quota > 0 ? usage / quota : 0;
     if (usage < CHARACTER_STORAGE_WARNING_BYTES && ratio < CHARACTER_STORAGE_WARNING_USAGE_RATIO) return;
     characterStorageWarningShown = true;
-    const message = "ブラウザの保存容量が少なくなっています。不要なキャラを削除するか、.purupuru でバックアップしてください。";
+    const message = "ブラウザの保存容量が少なくなっています。不要なキャラを削除するか、画像込み .purupuru でバックアップしてください。";
     console.warn(message, { usage, quota });
     setEditStatus(message);
   }
@@ -3090,7 +3209,7 @@
     const profileList = await listCharacterProfiles().catch(() => characterProfilesCache);
     const isNewProfile = !profileList.some((profile) => String(profile.id) === String(storedRecord.id));
     if (isNewProfile && profileList.length >= MAX_CHARACTER_PROFILES) {
-      throw new Error(`キャラは最大${MAX_CHARACTER_PROFILES}件まで保存できます。不要なキャラを削除するか .purupuru でバックアップしてください。`);
+      throw new Error(`キャラは最大${MAX_CHARACTER_PROFILES}件まで保存できます。不要なキャラを削除するか画像込み .purupuru でバックアップしてください。`);
     }
     warnIfCharacterStorageNearLimit(storageEstimate);
     const store = await characterStore("readwrite");
@@ -3203,20 +3322,15 @@
     return isAutoSeededCharacterSourceKind(kind) && readDeletedAutoCharacterSourceKinds().has(String(kind));
   }
 
-  function currentWorkspacePage() {
-    return document.querySelector("[data-workspace-target][aria-pressed='true']")?.dataset.workspaceTarget || "adjust";
-  }
-
-  function currentAdjustCategory() {
-    return document.querySelector("[data-adjust-target][aria-pressed='true']")?.dataset.adjustTarget || "layout";
+  function currentSection() {
+    return document.querySelector("[data-section-target][aria-pressed='true']")?.dataset.sectionTarget || "start";
   }
 
   function captureGlobalRuntimeSettings() {
     return {
       obsPresetKey,
       obsPublishEnabled,
-      workspacePage: currentWorkspacePage(),
-      adjustCategory: currentAdjustCategory(),
+      section: currentSection(),
       dockHidden: document.body.classList.contains("dock-hidden"),
       stateOverrides: {
         mouseFollowEnabled: state.mouseFollowEnabled,
@@ -3234,8 +3348,7 @@
     updateObsUrlPreview();
     obsPublishEnabled = Boolean(runtime.obsPublishEnabled);
     syncObsPublishButton();
-    if (runtime.workspacePage) setWorkspacePage(runtime.workspacePage);
-    if (runtime.adjustCategory) setAdjustCategory(runtime.adjustCategory);
+    if (runtime.section) setSection(runtime.section);
     setDockHidden(Boolean(runtime.dockHidden));
     for (const [key, value] of Object.entries(runtime.stateOverrides || {})) {
       if (Object.prototype.hasOwnProperty.call(state, key)) state[key] = value;
@@ -3394,11 +3507,33 @@
     setEditStatus(error instanceof Error ? error.message : "キャラ管理を初期化できませんでした。");
   }
 
+  function thumbnailCanvasSize(width, height) {
+    const w = Math.max(1, Math.round(Number(width) || 0));
+    const h = Math.max(1, Math.round(Number(height) || 0));
+    const scale = Math.min(1, THUMBNAIL_RENDER_MAX_EDGE / Math.max(w, h));
+    return { w: Math.max(1, Math.round(w * scale)), h: Math.max(1, Math.round(h * scale)) };
+  }
+
+  async function canvasToThumbnailDataUrl(sourceCanvas, name = "キャラサムネイル") {
+    const sourceWidth = sourceCanvas?.naturalWidth || sourceCanvas?.width || 0;
+    const sourceHeight = sourceCanvas?.naturalHeight || sourceCanvas?.height || 0;
+    if (sourceWidth <= 0 || sourceHeight <= 0) return "";
+    const size = thumbnailCanvasSize(sourceWidth, sourceHeight);
+    const thumbnailCanvas = document.createElement("canvas");
+    thumbnailCanvas.width = size.w;
+    thumbnailCanvas.height = size.h;
+    const thumbnailCtx = thumbnailCanvas.getContext("2d");
+    if (!thumbnailCtx) return "";
+    thumbnailCtx.clearRect(0, 0, size.w, size.h);
+    thumbnailCtx.drawImage(sourceCanvas, 0, 0, size.w, size.h);
+    const dataUrl = await canvasToPngDataUrl(thumbnailCanvas, name);
+    validateThumbnailU8(dataUrlToU8(dataUrl), name);
+    return dataUrl;
+  }
+
   async function captureCharacterThumbnailDataUrl() {
     if (!canvas?.toBlob) return "";
-    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
-    if (!blob) return "";
-    return blobToDataUrl(blob);
+    return canvasToThumbnailDataUrl(canvas, "キャラサムネイル");
   }
 
   async function buildAvatarCompositeThumbnailDataUrl(loadedImages, name = "キャラサムネイル") {
@@ -3409,16 +3544,19 @@
       Object.values(loadedImages || {})[0];
     if (!face) return "";
     const size = validateAvatarImageSetDimensions(loadedImages);
+    const thumbnailSize = thumbnailCanvasSize(size.w, size.h);
     const canvasElement = document.createElement("canvas");
-    canvasElement.width = size.w;
-    canvasElement.height = size.h;
+    canvasElement.width = thumbnailSize.w;
+    canvasElement.height = thumbnailSize.h;
     const thumbnailCtx = canvasElement.getContext("2d");
-    if (!thumbnailCtx) return blobToDataUrl(await imageToPngBlob(face));
-    thumbnailCtx.clearRect(0, 0, size.w, size.h);
+    if (!thumbnailCtx) return canvasToThumbnailDataUrl(face, name);
+    thumbnailCtx.clearRect(0, 0, thumbnailSize.w, thumbnailSize.h);
     for (const image of [loadedImages.backHair, face, loadedImages.frontHair]) {
-      if (image) thumbnailCtx.drawImage(image, 0, 0, size.w, size.h);
+      if (image) thumbnailCtx.drawImage(image, 0, 0, thumbnailSize.w, thumbnailSize.h);
     }
-    return canvasToPngDataUrl(canvasElement, name);
+    const dataUrl = await canvasToPngDataUrl(canvasElement, name);
+    validateThumbnailU8(dataUrlToU8(dataUrl), name);
+    return dataUrl;
   }
 
   function collectItemImageBlobsFromRuntime() {
@@ -3524,6 +3662,7 @@
       scaleNumberField(settings.state, "tearLensRadiusX", sx);
       scaleNumberField(settings.state, "tearLensRadiusY", sy);
       scaleNumberField(settings.state, "frontHairShadowDistance", s);
+      scaleNumberField(settings.state, "neckShadowDistance", s);
     }
     if (Array.isArray(settings.itemLayers)) {
       settings.itemLayers = settings.itemLayers.map((layer) => {
@@ -3737,6 +3876,8 @@
           layer.opacity,
           layer.followStrength,
           Boolean(layer.deformFollowEnabled),
+          Boolean(layer.depthEnabled),
+          layer.depth,
           layer.visible !== false,
           Boolean(layer.locked),
           imageSignature,
@@ -4036,7 +4177,7 @@
       console.warn("キャラ自動保存に失敗しました。", error, reason);
       updateCharacterSaveStatus("保存失敗");
       try {
-        await patchCharacterProfile(activeCharacterId, { lastError: error instanceof Error ? error.message : "保存に失敗しました。" });
+        await patchCharacterProfile(saveCharacterId, { lastError: error instanceof Error ? error.message : "保存に失敗しました。" });
       } catch {
         // 保存失敗情報の保存にも失敗した場合はUI表示だけで続行する。
       }
@@ -4087,8 +4228,11 @@
       previousRecord = previousId ? await getCharacterProfile(previousId) : null;
       const nextRecord = await getCharacterProfile(nextId);
       if (!nextRecord) throw new Error("切り替え先キャラが見つかりません。");
-      await loadAvatarImagesFromProfileRecord(nextRecord);
-      await hydrateProfileSettingsPayload(nextRecord);
+      // applyCharacterProfileRecord は内部で素材ロードと設定 hydrate を行い、
+      // いずれも状態を変異させる前（applyLoadedAvatarImages より手前）に実行されるため、
+      // ここで事前ロードしなくても素材不足・不正 PNG は変異前に fail-fast できる。
+      // 以前は同じ処理をここで先行実行しており、キャラ切り替えのたびに全 PNG デコードと
+      // アイテム Blob→DataURL 変換が二重に走っていたため削除した。
       await applyCharacterProfileRecord(nextRecord, { preserveGlobalRuntime: true });
       activeCharacterId = nextId;
       rememberActiveCharacterId(nextId);
@@ -4205,7 +4349,7 @@
     }
 
     const targetName = target.name || "未設定キャラ";
-    if (!window.confirm(`「${targetName}」を削除しますか？この操作は元に戻せません。必要なら先に .purupuru 保存してください。`)) {
+    if (!window.confirm(`「${targetName}」を削除しますか？この操作は元に戻せません。必要なら先に画像込み .purupuru 保存してください。`)) {
       return false;
     }
 
@@ -4230,10 +4374,11 @@
       rememberDeletedAutoCharacterSourceKind(managedDemoAvatarSourceKindForProfile(target) || target.source?.kind);
 
       if (deletingActive) {
-        await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true });
         activeCharacterId = fallbackRecord.id;
         rememberActiveCharacterId(fallbackRecord.id);
         activeCharacterSourceKind = String(fallbackRecord.source?.kind || "");
+        await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true, skipActiveUpdate: true });
+        await touchCharacterProfile(fallbackRecord.id);
         updateCharacterSaveStatus("保存済み");
       }
 
@@ -4271,6 +4416,7 @@
   let drawingAvatarExpressionPreviewLastAt = 0;
   let drawingAvatarExpressionPreviewTimer = null;
   let drawingAvatarResizeObserver = null;
+  let drawingAvatarPreviouslyFocused = null;
 
   function createDrawingAvatarLayerCanvas() {
     const canvasElement = document.createElement("canvas");
@@ -5018,9 +5164,68 @@
     scheduleDrawingAvatarRender();
   }
 
+  function drawingAvatarFocusableElements() {
+    const panel = ui.drawingAvatarPanel;
+    if (!panel || panel.hidden) return [];
+    return Array.from(panel.querySelectorAll("button, input, select, textarea, a[href], [tabindex]:not([tabindex=\"-1\"])"))
+      .filter((element) =>
+        element instanceof HTMLElement &&
+        !element.hidden &&
+        !element.hasAttribute("disabled") &&
+        element.getClientRects().length > 0
+      );
+  }
+
+  function focusDrawingAvatarInitialControl() {
+    requestAnimationFrame(() => {
+      if (!drawingAvatarPanelOpen()) return;
+      const focusable = drawingAvatarFocusableElements();
+      const target = ui.drawingAvatarFinishButton || focusable[0] || ui.drawingAvatarPanel;
+      target?.focus?.({ preventScroll: true });
+    });
+  }
+
+  function restoreDrawingAvatarFocus() {
+    const target = drawingAvatarPreviouslyFocused;
+    drawingAvatarPreviouslyFocused = null;
+    if (target instanceof HTMLElement && document.contains(target)) {
+      target.focus({ preventScroll: true });
+    }
+  }
+
+  function trapDrawingAvatarFocus(event) {
+    const panel = ui.drawingAvatarPanel;
+    if (!panel || panel.hidden) return;
+    const focusable = drawingAvatarFocusableElements();
+    if (!focusable.length) {
+      event.preventDefault();
+      panel.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (!panel.contains(active)) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   function openDrawingAvatarPanel() {
     if (OBS_MODE || !ui.drawingAvatarPanel) return;
     const resumed = Boolean(drawingAvatarSession);
+    const wasOpen = drawingAvatarPanelOpen();
+    if (!wasOpen) {
+      drawingAvatarPreviouslyFocused = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    }
     if (!drawingAvatarSession) drawingAvatarSession = createDrawingAvatarSession();
     ui.drawingAvatarPanel.hidden = false;
     setDrawingAvatarStatus(
@@ -5033,6 +5238,7 @@
     buildDrawingAvatarExpressionPreviews();
     drawingAvatarAutoFit = true;
     updateDrawingAvatarUi();
+    if (!wasOpen) focusDrawingAvatarInitialControl();
     requestAnimationFrame(() => resizeDrawingAvatarViewport({ forceFit: true }));
   }
 
@@ -5048,6 +5254,7 @@
     if (drawingAvatarSession) {
       setEditStatus("お絵描きを閉じました。描きかけの内容は「お絵描きで新キャラ作成」からいつでも再開できます。");
     }
+    restoreDrawingAvatarFocus();
   }
 
   async function openDrawingAvatarPanelForActiveCharacterEdit() {
@@ -5161,6 +5368,10 @@
     const session = drawingAvatarSession;
     const layer = drawingAvatarLayerById(id);
     if (!session || !layer || layer.kind !== "item") return;
+    // 削除は undo 対象外（クリアと異なり元に戻せない）ため、誤操作による描き込み消失を防ぐ確認を挟む。
+    if (typeof window.confirm === "function" && !window.confirm(`${layer.label} を削除します。この操作は元に戻せません。よろしいですか？`)) {
+      return;
+    }
     session.layers = session.layers.filter((entry) => entry.id !== id);
     session.undoStack = session.undoStack.filter((entry) => entry.layerId !== id);
     session.redoStack = session.redoStack.filter((entry) => entry.layerId !== id);
@@ -5292,12 +5503,44 @@
     };
   }
 
-  function pushDrawingAvatarUndo(layer) {
+  function drawingAvatarHistoryEntryBytes(entry) {
+    // 新形式は entry.image.imageData、旧形式は entry.image が ImageData。
+    const data = entry?.image?.imageData?.data || entry?.image?.data;
+    let bytes = data?.byteLength || 0;
+    const importedImages = Array.isArray(entry?.image?.importedImages)
+      ? entry.image.importedImages
+      : (entry?.image?.importedImage ? [entry.image.importedImage] : []);
+    for (const importedImage of importedImages) {
+      bytes += String(importedImage?.src || "").length;
+    }
+    return bytes;
+  }
+
+  function enforceDrawingAvatarHistoryBudget(session) {
+    if (!session) return;
+    const totalBytes = () =>
+      session.undoStack.reduce((sum, entry) => sum + drawingAvatarHistoryEntryBytes(entry), 0) +
+      session.redoStack.reduce((sum, entry) => sum + drawingAvatarHistoryEntryBytes(entry), 0);
+    // 古い undo から順に破棄（最低1件は残す）。それでも超過するなら redo を古い順に破棄する。
+    while (totalBytes() > DRAWING_AVATAR_MAX_HISTORY_BYTES && session.undoStack.length > 1) {
+      session.undoStack.shift();
+    }
+    while (totalBytes() > DRAWING_AVATAR_MAX_HISTORY_BYTES && session.redoStack.length > 0) {
+      session.redoStack.shift();
+    }
+  }
+
+  function pushDrawingAvatarUndoSnapshot(layerId, snapshot) {
     const session = drawingAvatarSession;
     if (!session) return;
-    session.undoStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+    session.undoStack.push({ layerId, image: snapshot });
     if (session.undoStack.length > DRAWING_AVATAR_MAX_HISTORY) session.undoStack.shift();
     session.redoStack.length = 0;
+    enforceDrawingAvatarHistoryBudget(session);
+  }
+
+  function pushDrawingAvatarUndo(layer) {
+    pushDrawingAvatarUndoSnapshot(layer.id, drawingAvatarSnapshotLayer(layer));
   }
 
   function applyDrawingAvatarHistory(fromStack, toStack) {
@@ -5308,6 +5551,8 @@
       const layer = drawingAvatarLayerById(entry.layerId);
       if (!layer) continue;
       toStack.push({ layerId: layer.id, image: drawingAvatarSnapshotLayer(layer) });
+      if (toStack.length > DRAWING_AVATAR_MAX_HISTORY) toStack.shift();
+      enforceDrawingAvatarHistoryBudget(session);
       if (entry.image?.imageData) {
         layer.ctx.putImageData(entry.image.imageData, 0, 0);
         layer.importedImages = cloneDrawingAvatarImportedImages(
@@ -5581,12 +5826,14 @@
     ensureDrawingAvatarLayerVisible(layer);
     if (session.tool === "fill") {
       if (point.x < 0 || point.x >= DRAWING_AVATAR_CANVAS_WIDTH || point.y < 0 || point.y >= DRAWING_AVATAR_CANVAS_HEIGHT) return;
-      pushDrawingAvatarUndo(layer);
+      // 変化を確定させてから undo に積む。先に push すると redoStack がクリアされ、
+      // 「同じ色で無変化」だった場合にやり直し履歴が失われてしまう。
+      const snapshotBefore = drawingAvatarSnapshotLayer(layer);
       const changed = drawingAvatarFloodFill(layer, point);
       if (!changed) {
-        session.undoStack.pop();
         setDrawingAvatarStatus("同じ色のため塗りつぶしませんでした。別の色を選ぶか、別の場所をクリックしてください。");
       } else {
+        pushDrawingAvatarUndoSnapshot(layer.id, snapshotBefore);
         setDrawingAvatarStatus(`${layer.label} を ${session.color} で塗りつぶしました。`);
       }
       updateDrawingAvatarUi({ rebuildList: false });
@@ -6108,6 +6355,7 @@
       drawingAvatarSession = null;
       drawingAvatarStroke = null;
       if (ui.drawingAvatarPanel) ui.drawingAvatarPanel.hidden = true;
+      restoreDrawingAvatarFocus();
       if (session.mode === "edit") {
         setEditStatus("お絵描きキャラを書き直して反映しました。必要ならキャラメニューからもう一度書き直せます。");
       } else {
@@ -6153,6 +6401,15 @@
     const session = drawingAvatarSession;
     if (!session || !drawingAvatarPanelOpen()) return;
     const key = String(event.key || "").toLowerCase();
+    if (key === "escape") {
+      event.preventDefault();
+      closeDrawingAvatarPanel();
+      return;
+    }
+    if (key === "tab") {
+      trapDrawingAvatarFocus(event);
+      return;
+    }
     if (event.ctrlKey || event.metaKey) {
       if (key === "z" && !event.shiftKey) {
         event.preventDefault();
@@ -6482,10 +6739,21 @@
     obsInputPostPending = true;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), OBS_INPUT_FETCH_TIMEOUT_MS);
+    let requestBody;
+    try {
+      // payload 生成が同期例外を投げると fetch の .finally() に到達せず
+      // obsInputPostPending が立ちっぱなしになり以降の送信が恒久停止するため、
+      // 送信前にここで組み立てて確実に解除できるようにする。
+      requestBody = JSON.stringify(buildObsInputPayload(nowMs));
+    } catch (error) {
+      clearTimeout(timeoutId);
+      obsInputPostPending = false;
+      return;
+    }
     fetch("/api/obs/input", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildObsInputPayload(nowMs)),
+      body: requestBody,
       signal: controller.signal,
     })
       .then((response) => {
@@ -6777,62 +7045,63 @@
     ui.dockPeekButton?.setAttribute("aria-expanded", String(!hidden));
   }
 
-  function setWorkspacePage(page) {
-    const pages = new Set(["adjust", "items", "output", "advanced"]);
-    const next = pages.has(page) ? page : "adjust";
-    document.querySelectorAll("[data-workspace-page]").forEach((el) => {
-      el.hidden = el.dataset.workspacePage !== next;
+  const SECTION_KEYS = new Set([
+    "start",
+    "layout",
+    "face",
+    "mouth",
+    "eyes",
+    "hair",
+    "look",
+    "items",
+    "output",
+    "advanced",
+  ]);
+
+  function setSection(section) {
+    const next = SECTION_KEYS.has(section) ? section : "start";
+    document.querySelectorAll("[data-section-page]").forEach((el) => {
+      el.hidden = el.dataset.sectionPage !== next;
     });
-    document.querySelectorAll("[data-workspace-target]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.workspaceTarget === next));
+    document.querySelectorAll("[data-section-target]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.sectionTarget === next));
     });
+    const dockContent = document.querySelector(".dock-content");
+    if (dockContent) dockContent.scrollTop = 0;
     try {
-      localStorage.setItem(WORKSPACE_STORAGE_KEY, next);
+      localStorage.setItem(SECTION_STORAGE_KEY, next);
     } catch (error) {
-      console.warn("ワークスペース状態の保存に失敗しました", error);
+      console.warn("セクション状態の保存に失敗しました", error);
     }
   }
 
-  function bindWorkspaceTabs() {
-    document.querySelectorAll("[data-workspace-target]").forEach((button) => {
-      button.addEventListener("click", () => setWorkspacePage(button.dataset.workspaceTarget));
+  function bindSectionNav() {
+    document.querySelectorAll("[data-section-target]").forEach((button) => {
+      button.addEventListener("click", () => setSection(button.dataset.sectionTarget));
     });
-    let initial = "adjust";
+    let initial = null;
     try {
-      initial = localStorage.getItem(WORKSPACE_STORAGE_KEY) || "adjust";
+      initial = localStorage.getItem(SECTION_STORAGE_KEY);
     } catch (error) {
-      console.warn("ワークスペース状態の読込に失敗しました", error);
+      console.warn("セクション状態の読込に失敗しました", error);
     }
-    setWorkspacePage(initial);
-  }
-
-  function setAdjustCategory(category) {
-    const categories = new Set(["layout", "face", "mouth", "eyes", "hair", "look"]);
-    const next = categories.has(category) ? category : "layout";
-    document.querySelectorAll("[data-adjust-page]").forEach((el) => {
-      el.hidden = el.dataset.adjustPage !== next;
-    });
-    document.querySelectorAll("[data-adjust-target]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.adjustTarget === next));
-    });
-    try {
-      localStorage.setItem(ADJUST_CATEGORY_STORAGE_KEY, next);
-    } catch (error) {
-      console.warn("調整カテゴリ状態の保存に失敗しました", error);
+    if (!initial) {
+      // 旧2階層タブ（workspace/adjust）からの移行読取。
+      let legacyWorkspace = null;
+      let legacyAdjust = null;
+      try {
+        legacyWorkspace = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+        legacyAdjust = localStorage.getItem(ADJUST_CATEGORY_STORAGE_KEY);
+      } catch (error) {
+        console.warn("旧ワークスペース状態の読込に失敗しました", error);
+      }
+      if (legacyWorkspace === "adjust") {
+        initial = legacyAdjust || "layout";
+      } else if (legacyWorkspace === "items" || legacyWorkspace === "output" || legacyWorkspace === "advanced") {
+        initial = legacyWorkspace;
+      }
     }
-  }
-
-  function bindAdjustTabs() {
-    document.querySelectorAll("[data-adjust-target]").forEach((button) => {
-      button.addEventListener("click", () => setAdjustCategory(button.dataset.adjustTarget));
-    });
-    let initial = "layout";
-    try {
-      initial = localStorage.getItem(ADJUST_CATEGORY_STORAGE_KEY) || "layout";
-    } catch (error) {
-      console.warn("調整カテゴリ状態の読込に失敗しました", error);
-    }
-    setAdjustCategory(initial);
+    setSection(initial || "start");
   }
 
   function setBackgroundColor(value) {
@@ -6859,7 +7128,6 @@
     state.hairColor = normalizeHexColor(value);
     state.hairTintEnabled = true;
     updateHairColorUi();
-    hairTintCache.clear();
   }
 
   // 色相・明るさをストレートアルファの画素値へ直接適用する。
@@ -6917,9 +7185,24 @@
     targetCtx.putImageData(imageData, 0, 0);
   }
 
+  function releaseHairTintTexture(image) {
+    try {
+      meshRenderer?.releaseTexture?.(image);
+    } catch (error) {
+      console.warn("髪色キャッシュのWebGLテクスチャ解放に失敗しました。", error);
+    }
+  }
+
+  function clearHairTintCache() {
+    for (const image of hairTintCache.values()) releaseHairTintTexture(image);
+    hairTintCache.clear();
+  }
+
   function rememberTintedHairImage(cacheKey, image) {
     if (hairTintCache.size >= HAIR_TINT_CACHE_LIMIT) {
-      hairTintCache.delete(hairTintCache.keys().next().value);
+      const evictKey = hairTintCache.keys().next().value;
+      releaseHairTintTexture(hairTintCache.get(evictKey));
+      hairTintCache.delete(evictKey);
     }
     hairTintCache.set(cacheKey, image);
   }
@@ -7467,7 +7750,7 @@
   function closeHairBundleSetupMode() {
     state.hairBundleSetupMode = false;
     hairBundleSetupDrag = null;
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", false);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", false);
   }
 
   function ensureEyeCenters() {
@@ -7480,7 +7763,7 @@
 
   function autoDetectEyeCenters() {
     highlightEyesRaw = cloneEyeCenters(DEFAULT_EYE_CENTERS);
-    setEyeSetupStatus("瞳位置を推定配置しました。合わない場合は編集ONで黒目や虹彩の中心へドラッグしてください。");
+    setEyeSetupStatus("瞳位置を自動でおまかせしました。合わない場合は編集ONで黒目や虹彩の中心へドラッグしてください。");
   }
 
   function saveEyeSetup() {
@@ -7490,7 +7773,7 @@
     })) {
       return false;
     }
-    setEyeSetupStatus("瞳位置・範囲サイズ・回転を保存しました。新キャラ時は推定配置または再編集してください。");
+    setEyeSetupStatus("瞳位置・範囲サイズ・回転を保存しました。新キャラ時は自動でおまかせまたは再編集してください。");
     return true;
   }
 
@@ -7539,7 +7822,7 @@
 
   function autoDetectFaceDepthAnchors() {
     faceDepthAnchorsRaw = defaultFaceDepthAnchors();
-    setFaceDepthSetupStatus("顔奥行き点を推定配置しました。ズレる点だけドラッグで調整してください。");
+    setFaceDepthSetupStatus("顔奥行き点を自動でおまかせしました。ズレる点だけドラッグで調整してください。");
     return true;
   }
 
@@ -7554,7 +7837,7 @@
   function saveFaceDepthSetup() {
     const payload = buildFaceDepthSetupPayload();
     if (!payload.anchors) {
-      setFaceDepthSetupStatus("保存する顔奥行き点がありません。推定配置または奥行き点編集ONで確認してください。");
+      setFaceDepthSetupStatus("保存する顔奥行き点がありません。自動でおまかせまたは点を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(FACE_DEPTH_SETUP_STORAGE_KEY, payload, () => {
@@ -7581,7 +7864,7 @@
 
   function autoDetectNeckPivot() {
     neckPivotRaw = defaultNeckPivot();
-    setNeckPivotSetupStatus("首支点を推定配置しました。首の付け根にズレる場合はドラッグで調整してください。");
+    setNeckPivotSetupStatus("首支点を自動でおまかせしました。首の付け根にズレる場合はドラッグで調整してください。");
     return true;
   }
 
@@ -7595,7 +7878,7 @@
   function saveNeckPivotSetup() {
     const payload = buildNeckPivotSetupPayload();
     if (!payload.pivot) {
-      setNeckPivotSetupStatus("保存する首支点がありません。推定配置または首支点編集ONで確認してください。");
+      setNeckPivotSetupStatus("保存する首支点がありません。自動でおまかせまたは首の支点を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(NECK_PIVOT_SETUP_STORAGE_KEY, payload, () => {
@@ -7724,7 +8007,7 @@
   function saveHairBundleSetup() {
     const payload = buildHairBundleSetupPayload();
     if (!payload.bundles) {
-      setHairBundleSetupStatus("保存する髪束ラインがありません。標準テンプレまたは髪束編集ONで確認してください。");
+      setHairBundleSetupStatus("保存する髪束ラインがありません。標準テンプレまたは髪束を編集ONで確認してください。");
       return false;
     }
     if (!safeSetJson(HAIR_BUNDLE_SETUP_STORAGE_KEY, payload, () => {
@@ -7902,7 +8185,7 @@
       if (state.hairBundleSetupMode) state.hairBundleSetupMode = false;
       hairBundleSetupDrag = null;
     }
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", state.hairBundleSetupMode);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", state.hairBundleSetupMode);
   }
 
   function updateCharacterWizardSetupControls() {
@@ -7932,6 +8215,10 @@
     const stepKey = characterWizardStepKey();
     const def = characterWizardStepDef();
     if (ui.characterWizardStepText) ui.characterWizardStepText.textContent = characterWizardStepNumberText();
+    if (ui.characterWizardProgressFill) {
+      const step = Math.min((characterWizard?.stepIndex || 0) + 1, CHARACTER_WIZARD_STEPS.length);
+      ui.characterWizardProgressFill.style.width = `${(step / CHARACTER_WIZARD_STEPS.length) * 100}%`;
+    }
     if (ui.characterWizardTitle) ui.characterWizardTitle.textContent = def.title;
     if (ui.characterWizardDescription) ui.characterWizardDescription.textContent = def.description;
     if (ui.characterWizardBackButton) ui.characterWizardBackButton.disabled = characterWizard.stepIndex <= 0;
@@ -7986,7 +8273,7 @@
     state.hairBundleSetupMode = false;
     hairBundleSetupDrag = null;
     if (ui.characterWizardPanel) ui.characterWizardPanel.hidden = true;
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", false);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", false);
     updateCharacterWizardSetupControls();
   }
 
@@ -8054,7 +8341,7 @@
     if (stepKey === "finish") {
       if (applyCharacterWizardDraft(characterWizard.draft)) {
         closeCharacterWizard();
-        setEditStatus("新キャラセットアップを反映しました。.purupuru 保存でバックアップできます。");
+        setEditStatus("新キャラセットアップを反映しました。画像込み .purupuru 保存でバックアップできます。");
       }
       return;
     }
@@ -8217,7 +8504,7 @@
   function saveHighlightSetup() {
     const payload = buildHighlightSetupPayload();
     if (!payload.points) {
-      setHighlightSetupStatus("保存するハイライト位置がありません。自動配置またはハイライト配置ONで確認してください。");
+      setHighlightSetupStatus("保存するハイライト位置がありません。自動でおまかせまたはハイライトを配置ONで確認してください。");
       return false;
     }
     if (!safeSetJson(HIGHLIGHT_SETUP_STORAGE_KEY, payload, () => {
@@ -8720,15 +9007,17 @@
       await audioEngine.startMic();
       micOn = true;
       if (ui.micButton) {
-        ui.micButton.textContent = "マイク停止";
+        setButtonLabel(ui.micButton, "マイク停止");
         ui.micButton.setAttribute("aria-pressed", "true");
+        ui.micButton.classList.add("is-active");
       }
     } catch (error) {
       audioEngine.stopMic();
       micOn = false;
       if (ui.micButton) {
-        ui.micButton.textContent = "マイク開始";
+        setButtonLabel(ui.micButton, "マイク開始");
         ui.micButton.setAttribute("aria-pressed", "false");
+        ui.micButton.classList.remove("is-active");
       }
       setAudioError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -8741,8 +9030,9 @@
     audioEngine.stopMic();
     micOn = false;
     if (ui.micButton) {
-      ui.micButton.textContent = "マイク開始";
+      setButtonLabel(ui.micButton, "マイク開始");
       ui.micButton.setAttribute("aria-pressed", "false");
+      ui.micButton.classList.remove("is-active");
     }
   }
 
@@ -8755,14 +9045,14 @@
     try {
       await faceTracker.start();
       if (ui.faceTrackButton) {
-        ui.faceTrackButton.textContent = "顔トラッキング停止";
+        setButtonLabel(ui.faceTrackButton, "顔トラッキング停止");
         ui.faceTrackButton.setAttribute("aria-pressed", "true");
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setFaceTrackStatus(`顔トラッキング: ${message}`, true);
       if (ui.faceTrackButton) {
-        ui.faceTrackButton.textContent = "顔トラッキング開始";
+        setButtonLabel(ui.faceTrackButton, "顔トラッキング開始");
         ui.faceTrackButton.setAttribute("aria-pressed", "false");
       }
     } finally {
@@ -8774,7 +9064,7 @@
     if (!faceTracker) return;
     faceTracker.stop();
     if (ui.faceTrackButton) {
-      ui.faceTrackButton.textContent = "顔トラッキング開始";
+      setButtonLabel(ui.faceTrackButton, "顔トラッキング開始");
       ui.faceTrackButton.setAttribute("aria-pressed", "false");
     }
     setFaceTrackStatus("顔トラッキング: OFF（マウス操作）");
@@ -8833,7 +9123,7 @@
   function updateMouseFollowButton() {
     if (!ui.mouseFollowButton) return;
     const idleLocksMouse = state.idleMotionEnabled;
-    ui.mouseFollowButton.textContent = idleLocksMouse ? "マウス追従 停止中" : `マウス追従 ${state.mouseFollowEnabled ? "ON" : "OFF"}`;
+    setButtonLabel(ui.mouseFollowButton, idleLocksMouse ? "マウス追従 停止中" : `マウス追従 ${state.mouseFollowEnabled ? "ON" : "OFF"}`);
     ui.mouseFollowButton.setAttribute("aria-pressed", String(!idleLocksMouse && state.mouseFollowEnabled));
     ui.mouseFollowButton.disabled = idleLocksMouse;
   }
@@ -9309,8 +9599,18 @@
       return texture;
     }
 
+    function releaseTexture(image) {
+      if (!image || disposed || contextLost || gl.isContextLost?.()) return;
+      const cached = textures.get(image);
+      if (!cached?.texture) return;
+      textures.delete(image);
+      textureSet.delete(cached.texture);
+      gl.deleteTexture(cached.texture);
+    }
+
     return {
       canvas: meshCanvas,
+      releaseTexture,
       dispose() {
         if (disposed) return;
         disposed = true;
@@ -9938,6 +10238,17 @@
   const HAIR_HEAD_LAG_Y = 0.85;
   const HAIR_HEAD_LAG_LIMIT_X = 30;
   const HAIR_HEAD_LAG_LIMIT_Y = 18;
+  // ★9 縦スカッシュ&ストレッチ: 頭の縦移動速度に応じて髪を横に開閉する。
+  // 下降時=圧縮で外へ開き外側毛先が浮く / 上昇時=伸長で内へ窄まる（体積保存の見た目・参考動画の縦揺れ準拠）。
+  const HAIR_VERT_SQUASH_VEL = 0.014;
+  const HAIR_VERT_SQUASH_FRONT = 5.5;
+  const HAIR_VERT_SQUASH_BACK = 9.5;
+  // ★10 しなり(S字)強調: 深さ n と n-0.3 のバネ状態差を曲率として加算し、
+  // 頭の動きが根元→毛先へ波として走る「しなり」を出す。
+  const HAIR_BEND_SAMPLE_OFFSET = 0.3;
+  const HAIR_BEND_GAIN_ANGLE = 16;
+  const HAIR_BEND_GAIN_HEAD = 0.55;
+  const HAIR_BEND_LIMIT = 14;
   const HAIR_SAMPLE_KEYS = [
     "anglePos",
     "anglePosY",
@@ -9953,7 +10264,9 @@
     "stretchY",
   ];
   const hairWarpBaseSpringSample = {};
+  const hairBendSpringSample = {}; // ★10 のしなり参照サンプル用スクラッチ
   const hairBundleSpringSampleScratch = {};
+  const hairBundleInfluenceScratch = {};
   const hairBundleRigMixScratch = {};
   const hairBundleRigMotionSpringScratch = {};
   const hairBundleRigMotionScratch = {
@@ -10005,14 +10318,15 @@
   function integrateHairSpringBucket(bucket, t, wave, targets, options) {
     const stiffness = options.stiffness ?? 1;
     const damping = options.damping ?? 1;
-    const k1 = lerp(190, 55, t) * stiffness;
-    // ★5 ハリ: 根元はほぼ臨界減衰(ζ≈0.9)のまま、毛先ほど減衰比を下げる(ζ≈0.5)。
-    // 頭が止まった後に毛先が一度だけ行き過ぎて戻る「ハリのある」挙動にする。
-    const c1 = lerp(24, 7.5, t) * damping;
-    const k2 = lerp(260, 120, t) * stiffness;
-    const c2 = lerp(29, 12, t) * damping;
-    const kP = lerp(132, 34, t) * stiffness;
-    const cP = lerp(21, 6.5, t) * damping;
+    // ★5 ハリ: 根元はほぼ臨界減衰(ζ≈0.9)のまま、毛先ほど減衰比を下げる(ζ≈0.45)。
+    // 毛先の剛性を高めに保つ(k1 tip 55→100 / kP tip 34→56)ことで固有振動数を上げ、
+    // 「素早く一度だけ行き過ぎてピタッと戻る」スプリングらしいハリを出す（参考動画準拠）。
+    const k1 = lerp(190, 100, t) * stiffness;
+    const c1 = lerp(24, 9, t) * damping;
+    const k2 = lerp(260, 170, t) * stiffness;
+    const c2 = lerp(29, 13, t) * damping;
+    const kP = lerp(132, 56, t) * stiffness;
+    const cP = lerp(21, 6.7, t) * damping;
 
     // ★6 連鎖化(follow-the-leader): wave は各段に専用ターゲットがあるため従来通り直接追従。
     const prev = options.prev || null;
@@ -10130,7 +10444,7 @@
     return sampleHairSpringState(spring, n, out);
   }
 
-  function hairBundleInfluence(x, y, def, line) {
+  function hairBundleInfluence(x, y, def, line, out = hairBundleInfluenceScratch) {
     const root = line.root;
     const tip = line.tip;
     const vx = tip.x - root.x;
@@ -10147,11 +10461,10 @@
     if (distanceWeight <= 0.001) return null;
     const rootDistance = clamp(Math.hypot(x - root.x, y - root.y) / Math.max(1, len), 0, 1.25);
     const tipWeight = smoothstep(0.12, 1.02, t * 0.78 + rootDistance * 0.22);
-    return {
-      t,
-      tipWeight,
-      weight: distanceWeight * (0.28 + tipWeight * 0.72),
-    };
+    out.t = t;
+    out.tipWeight = tipWeight;
+    out.weight = distanceWeight * (0.28 + tipWeight * 0.72);
+    return out;
   }
 
   function sampleHairBundleRigMotion(x, y, layer, baseSpring, baseMask) {
@@ -10276,6 +10589,17 @@
     const velocityLagX = clamp((-s.headVelX * 0.028 - s.angleVel * 2.4) * lagWeight, -18, 18); // 頭の速度・角速度に逆向きへ流す追加慣性。角度差分遅れとの二重効きを避けるため角速度は控えめ
     const velocityLagY = clamp(-s.headVelY * 0.018 * lagWeight, -12, 12); // 上下移動に遅れて毛先が残る重めの慣性
 
+    // ★10 しなり: 少し根元側(n-0.3)とのバネ状態差を曲率として加算。
+    // 各深さの遅れの「差分」なので、頭の動きが根元→毛先へS字の波として走って見える。
+    const bendRef = sampleHairSpring(layer, Math.max(0, n - HAIR_BEND_SAMPLE_OFFSET), hairBendSpringSample);
+    const bendX = clamp(
+      ((baseSpring.anglePos - bendRef.anglePos) * HAIR_BEND_GAIN_ANGLE +
+        (baseSpring.headPosX - bendRef.headPosX) * HAIR_BEND_GAIN_HEAD) *
+        activeMask * springAmt,
+      -HAIR_BEND_LIMIT,
+      HAIR_BEND_LIMIT
+    );
+
     let p = deformerWarpPoint(layerKey, x, y);
     const crownLock = hairCrownRootLockMask(x, y);
     if (crownLock > 0.001) {
@@ -10289,7 +10613,7 @@
     }
     const rootMotionDampen = layer === "front" ? 1 - crownLock * 0.85 * frontHairRootFollowAmount() : 1;
     const edgeShiftX = nx * edge * ax * (layer === "front" ? 2.2 : -3.0) * hair * bundleMotion.edgeScale * rootMotionDampen;
-    const motionDX = shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + edgeShiftX;
+    const motionDX = shiftX + tipDelay + s.stretchX * bundleMotion.motionScale + lagX + velocityLagX + edgeShiftX + bendX; // ★10 含む
     const motionDY = shiftY + s.stretchY * bundleMotion.motionScale + tipDelayY + lagY + velocityLagY;
 
     // ★7 円弧補正: 横変位 dx に対し根元支点の振り子として y を dx^2/(2L) 持ち上げる（長さ保存の弧）。
@@ -10312,8 +10636,20 @@
       }
     }
 
-    p.x += motionDX + splayX;
-    p.y += motionDY - arcLift + splayY; // ★1-Y + ★3 + ★4 + 速度慣性 + ★7 + ★8
+    // ★9 縦スカッシュ&ストレッチ: 頭の縦速度の符号で開閉を切り替える（★8 は速さのみで無方向）。
+    // 下降時(headVelY>0)は圧縮 → 横に開き外側の毛先ほど浮く。上昇時は伸長 → 内側に窄まり下へ流れる。
+    const vertVel = clamp(s.headVelY * HAIR_VERT_SQUASH_VEL, -1.1, 1.1);
+    const squashAmt = vertVel * activeMask * activeMask * springAmt * (layer === "front" ? HAIR_VERT_SQUASH_FRONT : HAIR_VERT_SQUASH_BACK);
+    let squashX = 0;
+    let squashY = 0;
+    if (Math.abs(squashAmt) > 0.01) {
+      const uSide = clamp((x - metrics.center.x) / Math.max(1, metrics.radiusX), -1.5, 1.5);
+      squashX = uSide * squashAmt;
+      squashY = -Math.abs(uSide) * squashAmt * 0.45;
+    }
+
+    p.x += motionDX + splayX + squashX;
+    p.y += motionDY - arcLift + splayY + squashY; // ★1-Y + ★3 + ★4 + 速度慣性 + ★7 + ★8 + ★9 + ★10
     return p;
   }
 
@@ -10471,16 +10807,21 @@
     return { blur };
   }
 
+  function currentFaceMeshWarpPoint(x, y) {
+    return tearLensWarpPoint(x, y);
+  }
+
   function currentFaceMeshSpec() {
+    if (faceMeshSpecCacheFrame === motionFrameId && faceMeshSpecCache.warpFn) return faceMeshSpecCache;
     const useTearLensMesh = state.tearLensEnabled && state.tearLensStrength > 0 && !state.eyeSetupMode && !state.faceDepthSetupMode && !blinkClosed;
     const yaw = Math.abs(clamp(state.angleX * (state.angleStrength / 100), -1.6, 1.6));
     const useFeatureTurnMesh = faceTurnDepthAmount() > 0.001 && yaw > 0.02 && !state.eyeSetupMode && !state.faceDepthSetupMode;
     const useHighMesh = useTearLensMesh || useFeatureTurnMesh;
-    return {
-      warpFn: (x, y) => tearLensWarpPoint(x, y),
-      cols: useHighMesh ? 28 : 14,
-      rows: useHighMesh ? 20 : 10,
-    };
+    faceMeshSpecCache.warpFn = currentFaceMeshWarpPoint;
+    faceMeshSpecCache.cols = useHighMesh ? 28 : 14;
+    faceMeshSpecCache.rows = useHighMesh ? 20 : 10;
+    faceMeshSpecCacheFrame = motionFrameId;
+    return faceMeshSpecCache;
   }
 
   function drawFrontHairShadowReceiverMask() {
@@ -10524,6 +10865,108 @@
     ctx.save();
     if (applyCharacterLocalTransform(ctx)) {
       ctx.globalAlpha = strength * 0.62;
+      ctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(frontHairShadowCompositeCanvas, 0, 0);
+    }
+    ctx.restore();
+  }
+
+  function neckShadowStrengthAmount() {
+    return clamp(Number(state.neckShadowStrength) || 0, 0, 100) / 100;
+  }
+
+  function neckShadowDistancePx() {
+    return clamp(Number(state.neckShadowDistance) || 0, 0, 40);
+  }
+
+  function neckShadowGeometry(distance) {
+    const yaw = clamp(state.angleX * (state.angleStrength / 100), -1.6, 1.6);
+    const pitch = clamp(state.angleY * (state.angleStrength / 100), -1.6, 1.6);
+    return {
+      offsetX: clamp(yaw * 6, -14, 14),
+      offsetY: distance + clamp(pitch * 4, -6, 8),
+      blur: clamp(distance * 0.45 + 2.5, 2.5, 16),
+    };
+  }
+
+  function drawNeckShadowShape(distance) {
+    const { offsetX, offsetY, blur } = neckShadowGeometry(distance);
+    frontHairShadowCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowCtx.globalAlpha = 1;
+    frontHairShadowCtx.globalCompositeOperation = "source-over";
+    frontHairShadowCtx.filter = "none";
+    frontHairShadowCtx.clearRect(0, 0, CROP.w, CROP.h);
+
+    // 顔シルエットを下方向へずらして描き、頭が体へ落とす接地影の形を作る。
+    const faceSpec = currentFaceMeshSpec();
+    drawMeshCroppedImage(
+      frontHairShadowCtx,
+      images[expressionKey()],
+      (x, y) => {
+        const p = faceSpec.warpFn(x, y);
+        return { x: p.x + offsetX, y: p.y + offsetY };
+      },
+      faceSpec.cols,
+      faceSpec.rows
+    );
+
+    frontHairShadowCtx.globalCompositeOperation = "source-in";
+    frontHairShadowCtx.fillStyle = "#2c1e1a";
+    frontHairShadowCtx.fillRect(0, 0, CROP.w, CROP.h);
+
+    // 顎下〜首元だけに影を残し、頬横の髪などへ広がらないよう上側をフェードアウト。
+    const neckY = currentNeckPivot().y;
+    const fade = frontHairShadowCtx.createLinearGradient(0, neckY - 320, 0, neckY - 80);
+    fade.addColorStop(0, "rgba(0,0,0,0)");
+    fade.addColorStop(1, "rgba(0,0,0,1)");
+    frontHairShadowCtx.globalCompositeOperation = "destination-in";
+    frontHairShadowCtx.fillStyle = fade;
+    frontHairShadowCtx.fillRect(0, 0, CROP.w, CROP.h);
+    frontHairShadowCtx.globalCompositeOperation = "source-over";
+    return { blur };
+  }
+
+  function drawNeckShadowReceiverMask() {
+    frontHairShadowReceiverCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowReceiverCtx.globalAlpha = 1;
+    frontHairShadowReceiverCtx.globalCompositeOperation = "source-over";
+    frontHairShadowReceiverCtx.filter = "none";
+    frontHairShadowReceiverCtx.clearRect(0, 0, CROP.w, CROP.h);
+
+    drawItemLayers(frontHairShadowReceiverCtx, "characterBack");
+    if (state.hairVisible && images.backHair) {
+      drawMeshCroppedImage(frontHairShadowReceiverCtx, images.backHair, (x, y) => hairWarpPoint(x, y, "back"), 14, 10);
+    }
+    drawItemLayers(frontHairShadowReceiverCtx, "faceBack");
+  }
+
+  // 首元の接地シャドウ: 顔より後ろのレイヤー（体アイテム・後ろ髪）にだけ、
+  // 顔シルエットのぼかし影を落として頭と体を光学的に接続する。
+  function drawNeckContactShadow() {
+    const strength = neckShadowStrengthAmount();
+    const distance = neckShadowDistancePx();
+    if (OBS_MODE && normalizeObsPresetKey(obsPresetKey) === "light") return;
+    if (!state.neckShadowEnabled || strength <= 0.001 || distance <= 0.001 || !lastCharacterTransform) return;
+    if (!images[expressionKey()]) return;
+
+    const { blur } = drawNeckShadowShape(distance);
+    drawNeckShadowReceiverMask();
+
+    frontHairShadowCompositeCtx.setTransform(1, 0, 0, 1, 0, 0);
+    frontHairShadowCompositeCtx.globalAlpha = 1;
+    frontHairShadowCompositeCtx.globalCompositeOperation = "source-over";
+    frontHairShadowCompositeCtx.filter = "none";
+    frontHairShadowCompositeCtx.clearRect(0, 0, CROP.w, CROP.h);
+    frontHairShadowCompositeCtx.filter = `blur(${blur}px)`;
+    frontHairShadowCompositeCtx.drawImage(frontHairShadowCanvas, 0, 0);
+    frontHairShadowCompositeCtx.filter = "none";
+    frontHairShadowCompositeCtx.globalCompositeOperation = "destination-in";
+    frontHairShadowCompositeCtx.drawImage(frontHairShadowReceiverCanvas, 0, 0);
+    frontHairShadowCompositeCtx.globalCompositeOperation = "source-over";
+
+    ctx.save();
+    if (applyCharacterLocalTransform(ctx)) {
+      ctx.globalAlpha = strength * 0.6;
       ctx.globalCompositeOperation = "source-over";
       ctx.drawImage(frontHairShadowCompositeCanvas, 0, 0);
     }
@@ -10703,19 +11146,105 @@
     return slot.anchor === "character" && Boolean(slot.rigidFollow);
   }
 
+  function itemLayerSupportsDepthFollow(layer) {
+    const slot = itemSlotInfo(layer?.slot);
+    return slot.anchor === "character" && !slot.rigidFollow;
+  }
+
+  function itemLayerDepthFollowActive(layer) {
+    if (!layer?.depthEnabled || !itemLayerSupportsDepthFollow(layer)) return false;
+    if (layer.deformFollowEnabled && itemLayerSupportsDeformFollow(layer)) return false;
+    return true;
+  }
+
+  let itemDepthHeadVectorCache = null;
+  let itemDepthHeadVectorCacheFrame = -1;
+
+  function itemDepthHeadMotionVector() {
+    if (itemDepthHeadVectorCacheFrame === motionFrameId && itemDepthHeadVectorCache) {
+      return itemDepthHeadVectorCache;
+    }
+    const center = currentFaceCenter();
+    const followed = faceRigidFollowPoint(center.x, center.y);
+    itemDepthHeadVectorCache = { x: followed.x - center.x, y: followed.y - center.y };
+    itemDepthHeadVectorCacheFrame = motionFrameId;
+    return itemDepthHeadVectorCache;
+  }
+
+  // 体パーツ向けの深度演出: 首元は顔の動きに同位相で追従し、下へ行くほど
+  // 減衰する「しなり」変形。遅延（バネ）は裾側の小さな残留揺れにのみ使う。
+  function itemDepthWarpPoint(layer, x, y) {
+    const head = itemDepthHeadMotionVector();
+    const motion = layer.depthMotion || head;
+    const depth =
+      clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
+    const rate = lerp(0.3, 0.05, depth);
+    const neckY = currentNeckPivot().y;
+    const span = Math.max(160, (CROP.h - neckY) * 0.85);
+    const w = 1 - smoothstep(neckY, neckY + span, y);
+    const swayX = (motion.x - head.x) * 0.5 * (1 - w);
+    const swayY = (motion.y - head.y) * 0.35 * (1 - w);
+
+    // 呼吸の体への伝播: 頭の呼吸バウンスから少し遅れて肩が上下し、
+    // 吸気で胸元がわずかに横へ膨らむ。強さは既存の「呼吸」スライダーに連動。
+    const breathAmt = state.breathStrength / 100;
+    let breathLiftY = 0;
+    let breathExpandX = 0;
+    if (breathAmt > 0.001) {
+      const breath = Math.sin(TAU * (animationSeconds * 0.18 - 0.05)); // 全体の呼吸より約0.3秒遅れ
+      const liftMask = 1 - smoothstep(neckY, CROP.h, y);
+      breathLiftY = -breath * 2.4 * breathAmt * liftMask;
+      const chestBand = smoothstep(neckY, neckY + 120, y) * (1 - smoothstep(neckY + 120, neckY + span, y));
+      const center = itemLayerCenter(layer);
+      const halfW = (imageSize(layer.image).w * Math.max(0.001, layer.scale / 100)) / 2;
+      const dxn = clamp((x - center.x) / Math.max(1, halfW), -1, 1);
+      breathExpandX = breath * 5 * breathAmt * dxn * chestBand;
+    }
+
+    return {
+      x: x + rate * (head.x * w + swayX) + breathExpandX,
+      y: y + rate * 0.55 * (head.y * w + swayY) + breathLiftY,
+    };
+  }
+
+  function updateItemDepthMotion(delta) {
+    let head = null;
+    for (const layer of itemLayers) {
+      if (!itemLayerDepthFollowActive(layer)) {
+        if (layer.depthMotion) layer.depthMotion = null;
+        continue;
+      }
+      if (!head) head = itemDepthHeadMotionVector();
+      const depth =
+        clamp(Number(layer.depth) || 0, ITEM_LAYER_LIMITS.depth.min, ITEM_LAYER_LIMITS.depth.max) / 100;
+      const stiffness = lerp(70, 26, depth);
+      const damping = 2 * 0.75 * Math.sqrt(stiffness); // ダンピング比0.75で軽い揺り戻し
+      const motion = layer.depthMotion || (layer.depthMotion = { x: head.x, y: head.y, vx: 0, vy: 0 });
+      const dt = clamp(delta, 0, 1 / 30);
+      motion.vx += (stiffness * (head.x - motion.x) - damping * motion.vx) * dt;
+      motion.vy += (stiffness * (head.y - motion.y) - damping * motion.vy) * dt;
+      motion.x += motion.vx * dt;
+      motion.y += motion.vy * dt;
+    }
+  }
+
   function itemLayerDeformFollowSpec(layer) {
-    if (!layer?.deformFollowEnabled || !itemLayerSupportsDeformFollow(layer)) return null;
-    const slot = itemSlotInfo(layer.slot);
-    const target = slot.deformFollow || slot.rigidFollow;
-    if (target === "face") {
-      const faceSpec = currentFaceMeshSpec();
-      return { warpFn: (x, y) => faceWarpPoint(x, y), cols: faceSpec.cols, rows: faceSpec.rows };
+    if (layer?.deformFollowEnabled && itemLayerSupportsDeformFollow(layer)) {
+      const slot = itemSlotInfo(layer.slot);
+      const target = slot.deformFollow || slot.rigidFollow;
+      if (target === "face") {
+        const faceSpec = currentFaceMeshSpec();
+        return { warpFn: (x, y) => faceWarpPoint(x, y), cols: faceSpec.cols, rows: faceSpec.rows };
+      }
+      if (target === "frontHair") {
+        return { warpFn: (x, y) => hairWarpPoint(x, y, "front"), cols: 14, rows: 10 };
+      }
+      if (target === "backHair") {
+        return { warpFn: (x, y) => hairWarpPoint(x, y, "back"), cols: 14, rows: 10 };
+      }
     }
-    if (target === "frontHair") {
-      return { warpFn: (x, y) => hairWarpPoint(x, y, "front"), cols: 14, rows: 10 };
-    }
-    if (target === "backHair") {
-      return { warpFn: (x, y) => hairWarpPoint(x, y, "back"), cols: 14, rows: 10 };
+    if (itemLayerDepthFollowActive(layer)) {
+      return { warpFn: (x, y) => itemDepthWarpPoint(layer, x, y), cols: 12, rows: 10 };
     }
     return null;
   }
@@ -11215,7 +11744,7 @@
     ctx.textBaseline = "alphabetic";
     ctx.fillStyle = "rgba(52,39,31,0.92)";
     ctx.font = "900 14px system-ui, sans-serif";
-    ctx.fillText("髪束編集：どこに合わせる？", x + 14, y + 24);
+    ctx.fillText("髪束を編集：どこに合わせる？", x + 14, y + 24);
     const rows = [
       { color: "#ff9b3d", text: "前髪：顔の前にかかる髪" },
       { color: "#45c7e8", text: "横髪：耳横・頬横の長い髪" },
@@ -11945,6 +12474,7 @@
     drawCharacterAnchoredItemLayers("characterBack");
     drawBackHairLayer();
     drawCharacterAnchoredItemLayers("faceBack");
+    drawNeckContactShadow();
     drawFaceAndHighlightLayer();
     drawCharacterAnchoredItemLayers("faceFront");
     drawFrontHairCastShadow();
@@ -12444,6 +12974,8 @@
     requestMainAnimationFrame();
   }
 
+  let lastTickErrorLogAt = 0;
+  const TICK_ERROR_LOG_INTERVAL_MS = 2000;
   function tick(timestamp) {
     try {
       const obsFrameInterval = OBS_MODE ? 1000 / currentObsRenderFps() : 0;
@@ -12514,11 +13046,17 @@
       publishObsInput(timestamp);
       advanceBlinkEvent(timestamp);
       updateHairPhysics(delta);
+      updateItemDepthMotion(delta);
       updateHighlightPulse(delta);
       render();
     } catch (error) {
-      console.error("[tick] animation loop error:", error);
-      setStatus("error");
+      // 恒常的な例外時に 60fps でログ/DOM 更新を垂れ流さないようスロットルする。
+      const errorNow = (typeof performance !== "undefined" && performance.now) ? performance.now() : timestamp || 0;
+      if (errorNow - lastTickErrorLogAt > TICK_ERROR_LOG_INTERVAL_MS) {
+        lastTickErrorLogAt = errorNow;
+        console.error("[tick] animation loop error:", error);
+        setStatus("error");
+      }
     } finally {
       requestMainAnimationFrame();
     }
@@ -12708,9 +13246,15 @@
     if (output) output.textContent = `${value}${suffix}`;
   }
 
+  function setButtonLabel(button, text) {
+    if (!button) return;
+    const label = button.querySelector(".chip-label");
+    (label || button).textContent = text;
+  }
+
   function syncButtonPressed(button, enabledLabel, disabledLabel, enabled) {
     if (!button) return;
-    button.textContent = enabled ? enabledLabel : disabledLabel;
+    setButtonLabel(button, enabled ? enabledLabel : disabledLabel);
     button.setAttribute("aria-pressed", String(Boolean(enabled)));
   }
 
@@ -12719,11 +13263,11 @@
   // on/off 文言は現状の各ハンドラ内 syncButtonPressed 呼出の引数と完全一致。
   const SETUP_TOOLS = {
     editMode:        { button: "editModeButton",        on: "編集モード ON",     off: "編集モード OFF",     state: "editMode" },
-    eyeSetup:        { button: "eyeSetupButton",        on: "瞳位置編集 ON",     off: "瞳位置編集 OFF",     state: "eyeSetupMode" },
-    highlightSetup:  { button: "highlightSetupButton",  on: "ハイライト配置 ON", off: "ハイライト配置 OFF", state: "highlightSetupMode" },
-    faceDepthSetup:  { button: "faceDepthSetupButton",  on: "奥行き点編集 ON",   off: "奥行き点編集 OFF",   state: "faceDepthSetupMode" },
-    neckPivotSetup:  { button: "neckPivotSetupButton",  on: "首支点編集 ON",     off: "首支点編集 OFF",     state: "neckPivotSetupMode" },
-    hairBundleSetup: { button: "hairBundleSetupButton", on: "髪束編集 ON",       off: "髪束編集 OFF",       state: "hairBundleSetupMode" },
+    eyeSetup:        { button: "eyeSetupButton",        on: "瞳の位置を編集 ON",   off: "瞳の位置を編集 OFF",   state: "eyeSetupMode" },
+    highlightSetup:  { button: "highlightSetupButton",  on: "ハイライトを配置 ON", off: "ハイライトを配置 OFF", state: "highlightSetupMode" },
+    faceDepthSetup:  { button: "faceDepthSetupButton",  on: "点を編集 ON",         off: "点を編集 OFF",         state: "faceDepthSetupMode" },
+    neckPivotSetup:  { button: "neckPivotSetupButton",  on: "首の支点を編集 ON",   off: "首の支点を編集 OFF",   state: "neckPivotSetupMode" },
+    hairBundleSetup: { button: "hairBundleSetupButton", on: "髪束を編集 ON",       off: "髪束を編集 OFF",       state: "hairBundleSetupMode" },
   };
 
   // 6つの drag 変数は IIFE トップレベルのクロージャスコープで宣言されているため一括クリア可能。
@@ -12835,12 +13379,12 @@
   function saveAdjustSnapshot() {
     const payload = buildAllSettingsPayload({ includeItemImages: false, includeBaseline: false });
     adjustSnapshotState = { ...payload.state };
-    setEditStatus("現在の状態を調整前として保存しました。");
+    setEditStatus("今の状態を保存しました。");
   }
 
   function restoreAdjustSnapshot() {
     if (!adjustSnapshotState) {
-      setEditStatus("調整前スナップショットがありません。「調整前を保存」で保存してください。");
+      setEditStatus("保存した状態がありません。「今の状態を保存」で保存してください。");
       return;
     }
     applyAllSettingsState(adjustSnapshotState);
@@ -12854,7 +13398,7 @@
     syncAllSettingControls();
     updateAllChangedBadges();
     setPreviewTarget(0, 0);
-    setEditStatus("調整前の状態に戻しました。");
+    setEditStatus("保存した状態に戻しました。");
   }
 
   function syncAllSettingControls() {
@@ -12867,6 +13411,7 @@
     if (ui.highlightEnabled) ui.highlightEnabled.checked = Boolean(state.highlightEnabled);
     if (ui.hairVisible) ui.hairVisible.checked = Boolean(state.hairVisible);
     if (ui.frontHairShadowEnabled) ui.frontHairShadowEnabled.checked = Boolean(state.frontHairShadowEnabled);
+    if (ui.neckShadowEnabled) ui.neckShadowEnabled.checked = Boolean(state.neckShadowEnabled);
     updateSubHighlightControls();
     if (ui.tearLensEnabled) ui.tearLensEnabled.checked = Boolean(state.tearLensEnabled);
     if (ui.showMesh) ui.showMesh.checked = Boolean(state.showMesh);
@@ -12874,13 +13419,13 @@
     if (ui.editKeySelect) ui.editKeySelect.value = state.editKey;
     if (ui.hairBundleFocusSelect) ui.hairBundleFocusSelect.value = normalizeHairBundleFocus(hairBundleFocus);
     syncButtonPressed(ui.editModeButton, "編集モード ON", "編集モード OFF", state.editMode);
-    syncButtonPressed(ui.eyeSetupButton, "瞳位置編集 ON", "瞳位置編集 OFF", state.eyeSetupMode);
-    syncButtonPressed(ui.highlightSetupButton, "ハイライト配置 ON", "ハイライト配置 OFF", state.highlightSetupMode);
-    syncButtonPressed(ui.faceDepthSetupButton, "奥行き点編集 ON", "奥行き点編集 OFF", state.faceDepthSetupMode);
-    syncButtonPressed(ui.neckPivotSetupButton, "首支点編集 ON", "首支点編集 OFF", state.neckPivotSetupMode);
-    syncButtonPressed(ui.hairBundleSetupButton, "髪束編集 ON", "髪束編集 OFF", state.hairBundleSetupMode);
+    syncButtonPressed(ui.eyeSetupButton, "瞳の位置を編集 ON", "瞳の位置を編集 OFF", state.eyeSetupMode);
+    syncButtonPressed(ui.highlightSetupButton, "ハイライトを配置 ON", "ハイライトを配置 OFF", state.highlightSetupMode);
+    syncButtonPressed(ui.faceDepthSetupButton, "点を編集 ON", "点を編集 OFF", state.faceDepthSetupMode);
+    syncButtonPressed(ui.neckPivotSetupButton, "首の支点を編集 ON", "首の支点を編集 OFF", state.neckPivotSetupMode);
+    syncButtonPressed(ui.hairBundleSetupButton, "髪束を編集 ON", "髪束を編集 OFF", state.hairBundleSetupMode);
     syncButtonPressed(ui.demoTalkButton, "口パクデモ ON", "口パクデモ OFF", state.demoTalk);
-    syncButtonPressed(ui.idleMotionButton, "待機モーション ON", "待機モーション OFF", state.idleMotionEnabled);
+    syncButtonPressed(ui.idleMotionButton, "待機ゆれ ON", "待機ゆれ OFF", state.idleMotionEnabled);
     syncButtonPressed(ui.diagonalFaceWarpButton, "斜め補正 ON", "斜め補正 OFF", state.diagonalFaceWarpEnabled);
     syncButtonPressed(ui.blinkButton, "まばたき ON", "まばたき OFF", state.autoBlink);
     updateMouseFollowButton();
@@ -12969,7 +13514,7 @@
     if (!element) return false;
     if (element.closest("#obsPanel")) return false;
     if (element.closest("#characterSwitcher")) return false;
-    if (element.closest(".workspace-tabs") || element.closest(".adjust-tabs")) return false;
+    if (element.closest(".nav-rail")) return false;
     if (element.id === "allSettingsFileInput" || element.id === "addCharacterFileInput") return false;
     return Boolean(element.closest(".control-card") || element.closest(".character-wizard-panel"));
   }
@@ -12988,6 +13533,9 @@
     });
     ui.duplicateCharacterButton?.addEventListener("click", () => {
       void duplicateActiveCharacterProfile();
+    });
+    ui.addCharacterFromStartButton?.addEventListener("click", () => {
+      ui.addCharacterButton?.click();
     });
     ui.addCharacterFileInput?.addEventListener("change", async () => {
       const file = ui.addCharacterFileInput.files?.[0];
@@ -13042,8 +13590,8 @@
 
   function showItemWorkspaceForDrag(event) {
     if (!hasPotentialItemFileDrag(event)) return false;
-    const itemPage = document.querySelector('[data-workspace-page="items"]');
-    if (itemPage?.hidden) setWorkspacePage("items");
+    const itemPage = document.querySelector('[data-section-page="items"]');
+    if (itemPage?.hidden) setSection("items");
     return true;
   }
 
@@ -13173,6 +13721,17 @@
       updateItemLayerUi();
       markActiveCharacterDirty("settings", "item-deform-follow");
     });
+    ui.itemDepthEnabled?.addEventListener("change", () => {
+      if (blockItemMutationWhileActive()) return;
+      const layer = activeItemLayer();
+      if (!layer || layer.locked || !itemLayerSupportsDepthFollow(layer)) return;
+      layer.depthEnabled = ui.itemDepthEnabled.checked;
+      if (!layer.depthEnabled) layer.depthMotion = null;
+      itemHandleVisible = true;
+      updateItemLayerUi();
+      markActiveCharacterDirty("settings", "item-depth-follow");
+    });
+    ui.itemDepth?.addEventListener("input", () => setItemLayerValue("depth", Number(ui.itemDepth.value)));
     ui.itemScale?.addEventListener("input", () => setItemLayerValue("scale", Number(ui.itemScale.value)));
     ui.itemFollowStrength?.addEventListener("input", () => setItemLayerValue("followStrength", Number(ui.itemFollowStrength.value)));
     ui.itemRotation?.addEventListener("input", () => setItemLayerValue("rotation", Number(ui.itemRotation.value)));
@@ -13242,6 +13801,8 @@
     bindRange("hairBundleStrength", "hairBundleStrength");
     bindRange("frontHairShadowStrength", "frontHairShadowStrength");
     bindRange("frontHairShadowDistance", "frontHairShadowDistance", "px");
+    bindRange("neckShadowStrength", "neckShadowStrength");
+    bindRange("neckShadowDistance", "neckShadowDistance", "px");
     bindRange("followSpeed", "followSpeed");
     bindRange("rangeLeft", "rangeLeft");
     bindRange("rangeRight", "rangeRight");
@@ -13270,7 +13831,6 @@
     bindRange("hairTintLightness", "hairTintLightness", "%", () => {
       state.hairTintEnabled = true;
       updateHairColorUi();
-      hairTintCache.clear();
       updateChangedBadgeForControl("hairTintEnabled");
     });
     bindRange("tearLensStrength", "tearLensStrength");
@@ -13292,6 +13852,11 @@
       updateChangedBadgeForControl("hairVisible");
     });
 
+    ui.neckShadowEnabled?.addEventListener("change", () => {
+      state.neckShadowEnabled = ui.neckShadowEnabled.checked;
+      updateChangedBadgeForControl("neckShadowEnabled");
+      markActiveCharacterDirty("settings", "neck-shadow");
+    });
     ui.frontHairShadowEnabled?.addEventListener("change", () => {
       state.frontHairShadowEnabled = ui.frontHairShadowEnabled.checked;
       updateChangedBadgeForControl("frontHairShadowEnabled");
@@ -13302,7 +13867,7 @@
       updateChangedBadgeForControl("subHighlightEnabled");
       if (state.subHighlightEnabled) {
         ensureSubHighlightPoints();
-        setHighlightSetupStatus("サブハイライトをONにしました。ハイライト配置ONでサブ光も移動できます。");
+        setHighlightSetupStatus("サブハイライトをONにしました。ハイライトを配置ONでサブ光も移動できます。");
       } else {
         if (highlightSetupDrag?.kind === "sub") highlightSetupDrag = null;
         setHighlightSetupStatus("サブハイライトをOFFにしました。");
@@ -13319,7 +13884,7 @@
         setPreviewTarget(0, 0);
         setHighlightSetupStatus("左右の光マーカーを、白い光を置きたい位置へドラッグしてください。");
       } else {
-        setHighlightSetupStatus("ハイライト配置OFF。ズレる時だけ再編集できます。");
+        setHighlightSetupStatus("ハイライトを配置OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13339,7 +13904,7 @@
         setPreviewTarget(0, 0);
         setFaceDepthSetupStatus("5つの丸を、左目・右目・鼻・口・顎の中心へドラッグしてください。");
       } else {
-        setFaceDepthSetupStatus("奥行き点編集OFF。ズレる時だけ再編集できます。");
+        setFaceDepthSetupStatus("点を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13359,7 +13924,7 @@
         setPreviewTarget(0, 0);
         setNeckPivotSetupStatus("紫の丸を首の付け根へドラッグしてください。");
       } else {
-        setNeckPivotSetupStatus("首支点編集OFF。ズレる時だけ再編集できます。");
+        setNeckPivotSetupStatus("首の支点を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13388,7 +13953,7 @@
         setPreviewTarget(0, 0);
         setHairBundleSetupStatus(`表示中: ${hairBundleFocusLabel()}。白丸は髪束の上端・頭に入っていくあたり、色丸は大きく揺らしたい毛先に置きます。`);
       } else {
-        setHairBundleSetupStatus("髪束編集OFF。ズレる時だけ再編集できます。");
+        setHairBundleSetupStatus("髪束を編集OFF。ズレる時だけ再編集できます。");
       }
     });
 
@@ -13413,7 +13978,7 @@
         setPreviewTarget(0, 0);
         setEyeSetupStatus("左右の丸を黒目や虹彩の中心へドラッグしてください。");
       } else {
-        setEyeSetupStatus("瞳位置編集OFF。新キャラ時は推定配置または再編集できます。");
+        setEyeSetupStatus("瞳の位置を編集OFF。新キャラ時は自動でおまかせまたは再編集できます。");
       }
     });
 
@@ -13449,7 +14014,7 @@
       state.hairTintLightness = 0;
       setRangeControlValue("hairTintLightness", state.hairTintLightness);
       updateHairColorUi();
-      hairTintCache.clear();
+      clearHairTintCache();
       updateChangedBadgeForControl("hairTintEnabled");
       updateChangedBadgeForControl("hairColor");
       updateChangedBadgeForControl("hairTintLightness");
@@ -13540,7 +14105,7 @@
 
     ui.demoTalkButton?.addEventListener("click", () => {
       state.demoTalk = !state.demoTalk;
-      ui.demoTalkButton.textContent = `口パクデモ ${state.demoTalk ? "ON" : "OFF"}`;
+      setButtonLabel(ui.demoTalkButton, `口パクデモ ${state.demoTalk ? "ON" : "OFF"}`);
       ui.demoTalkButton.setAttribute("aria-pressed", String(state.demoTalk));
     });
 
@@ -13556,7 +14121,7 @@
           state.targetY = 0;
         }
       }
-      syncButtonPressed(ui.idleMotionButton, "待機モーション ON", "待機モーション OFF", state.idleMotionEnabled);
+      syncButtonPressed(ui.idleMotionButton, "待機ゆれ ON", "待機ゆれ OFF", state.idleMotionEnabled);
       updateMouseFollowButton();
     });
 
@@ -13569,7 +14134,7 @@
 
     ui.blinkButton?.addEventListener("click", () => {
       state.autoBlink = !state.autoBlink;
-      ui.blinkButton.textContent = `まばたき ${state.autoBlink ? "ON" : "OFF"}`;
+      setButtonLabel(ui.blinkButton, `まばたき ${state.autoBlink ? "ON" : "OFF"}`);
       ui.blinkButton.setAttribute("aria-pressed", String(state.autoBlink));
       scheduleBlink();
       markActiveCharacterDirty("settings", "auto-blink");
@@ -13676,8 +14241,7 @@
   function bindNavigationAndBaselineControls() {
     updateMouseFollowButton();
     updateRangePreviewButtons();
-    bindWorkspaceTabs();
-    bindAdjustTabs();
+    bindSectionNav();
 
     // Phase 4: baseline 基準値 UI のバインド
     document.querySelectorAll("[data-reset-section]").forEach((button) => {

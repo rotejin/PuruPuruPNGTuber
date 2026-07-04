@@ -35,7 +35,7 @@ PuruPuru PNGTuber is a local browser app for creating expressive PNGTuber avatar
    - キャラ設定・初期位置・髪束ライン・アイテム設定の作成
 3. ローカルで起動して確認する
 4. ブラウザ上で表情、顔向き、髪揺れ、アイテム位置を微調整する
-5. `.purupuru` ファイルとして保存・バックアップする
+5. 画像込みのポータブルな `.purupuru` アバターパッケージとして保存・バックアップする
 
 English summary:
 
@@ -43,7 +43,7 @@ English summary:
 2. Ask Codex, Claude Code, or another coding agent to create the initial character setup.
 3. Run the app locally.
 4. Fine-tune the avatar in the browser.
-5. Export a `.purupuru` package for backup or transfer.
+5. Export a self-contained `.purupuru` avatar package (images + settings) for backup or transfer.
 
 ## 用意する素材 / Required images
 
@@ -109,8 +109,17 @@ ribbon.png    リボン
 - 顔向き、ハイライト、涙レンズ、影の調整
 - PNGアイテムの追加、前後関係、追従、ロック
 - OBS向け透過表示
-- `.purupuru` avatar package import/export
+- Self-contained `.purupuru` avatar package import/export (images + settings)
 - Advanced warp editor for face and hair adjustment
+
+## `.purupuru` アバターパッケージ / Avatar package
+
+`.purupuru` は、キャラ画像と調整値をまとめた **画像込みのポータブルなアバターパッケージ** です。
+
+- 表情差分PNG、前髪、後ろ髪、PNGアイテム、OBS設定、顔中心・目・口・首支点・髪束ラインなどの調整値を含みます。
+- 元のPNG素材フォルダに依存しないため、素材を移動した後や別PCでも `.purupuru` から読み込めます。
+- キャラ調整後は、バックアップや受け渡し用に `.purupuru` 保存を推奨します。
+- `.purupuru` の中身を手動編集する運用はサポート対象外です。このアプリで保存・読み込みしてください。
 
 ## クイックスタート / Quick start
 
@@ -184,6 +193,9 @@ node --check app.js
 node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js
 node tests/js_runtime_checks.mjs
 python -m py_compile scripts/run_local_server.py
+python -m py_compile scripts/verify_vendor_checksums.py
+python -m py_compile scripts/fetch_fonts.py
+python scripts/verify_vendor_checksums.py
 python -m unittest tests.test_project_static
 ```
 

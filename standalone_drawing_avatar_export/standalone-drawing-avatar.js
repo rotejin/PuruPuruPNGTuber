@@ -7,15 +7,22 @@
   const MAX_ITEMS = 8;
   const MAX_IMPORTED_IMAGES_PER_LAYER = 16;
   const MAX_HISTORY = 30;
+  const MAX_HISTORY_BYTES = 96 * 1024 * 1024;
   const ONION = 0.35;
   const TOL = 12;
   const MAX_PNG_FILE_SIZE = 3 * 1024 * 1024;
-  const MAX_PROJECT_FILE_SIZE = 80 * 1024 * 1024;
+  const MAX_PROJECT_FILE_SIZE = 16 * 1024 * 1024;
   const MAX_PROJECT_DATA_URL_SIZE = 32 * 1024 * 1024;
   const MAX_IMAGE_EDGE = 4096;
   const MAX_IMAGE_PIXELS = 16 * 1024 * 1024;
   const PNG_DATA_URL_PREFIX = "data:image/png;base64,";
   const PNG_BASE64_SIGNATURE = "iVBORw0KGgo";
+  const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const MAX_PROJECT_JSON_DEPTH = 16;
+  const MAX_PROJECT_KEYS_PER_OBJECT = 2000;
+  const MAX_PROJECT_ARRAY_LENGTH = 2000;
+  const MAX_PROJECT_STRING_LENGTH = 4 * 1024 * 1024;
+  const MAX_PROJECT_NODE_COUNT = 50000;
   const DEFAULT_MUTED = new Set(["eyesClosed", "mouthHalf", "mouthOpen"]);
   const FIXED = [
     ["faceBase", "顔ベース"],
@@ -508,10 +515,27 @@
       nextImportedId: l.nextImportedId,
     };
   }
+  function historyEntryBytes(entry) {
+    const image = entry?.image || {};
+    let bytes = image.data?.data?.byteLength || image.data?.byteLength || 0;
+    const importedImages = Array.isArray(image.importedImages)
+      ? image.importedImages
+      : (image.imported ? [image.imported] : []);
+    for (const imported of importedImages) bytes += String(imported?.src || "").length;
+    return bytes;
+  }
+  function enforceHistoryBudget() {
+    const totalBytes = () =>
+      app.undo.reduce((sum, entry) => sum + historyEntryBytes(entry), 0) +
+      app.redo.reduce((sum, entry) => sum + historyEntryBytes(entry), 0);
+    while (totalBytes() > MAX_HISTORY_BYTES && app.undo.length > 1) app.undo.shift();
+    while (totalBytes() > MAX_HISTORY_BYTES && app.redo.length > 0) app.redo.shift();
+  }
   function pushUndo(l) {
     app.undo.push({ id: l.id, image: snapshot(l) });
     if (app.undo.length > MAX_HISTORY) app.undo.shift();
     app.redo.length = 0;
+    enforceHistoryBudget();
     dirty = true;
   }
   function applyHistory(from, to) {
@@ -519,6 +543,8 @@
       const e = from.pop(), l = byId(e.id);
       if (!l) continue;
       to.push({ id: l.id, image: snapshot(l) });
+      if (to.length > MAX_HISTORY) to.shift();
+      enforceHistoryBudget();
       l.ctx.putImageData(e.image.data, 0, 0);
       l.importedImages = cloneImportedList(e.image.importedImages || (e.image.imported ? [e.image.imported] : []));
       l.activeImportedId = e.image.activeImportedId || l.importedImages[l.importedImages.length - 1]?.id || null;
@@ -670,10 +696,20 @@
     if (p.x < -app.size || p.x > W + app.size || p.y < -app.size || p.y > H + app.size) return;
     if (l.muted) ensureVisible(l);
     if (app.tool === "fill") {
-      if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return;
-      pushUndo(l);
-      if (!flood(l, p)) { app.undo.pop(); say("同じ色のため塗りつぶしませんでした。"); }
-      else say(`${l.label} を塗りつぶしました。`);
+      if (p.x < 0 || p.x >= W || p.y < 0 || p.y >= H) return;
+      // 変化を確定させてから undo に積む。先に push すると redo がクリアされ、
+      // 「同じ色で無変化」だった場合にやり直し履歴が失われてしまう。
+      const before = snapshot(l);
+      if (!flood(l, p)) {
+        say("同じ色のため塗りつぶしませんでした。");
+      } else {
+        app.undo.push({ id: l.id, image: before });
+        if (app.undo.length > MAX_HISTORY) app.undo.shift();
+        app.redo.length = 0;
+        enforceHistoryBudget();
+        dirty = true;
+        say(`${l.label} を塗りつぶしました。`);
+      }
       update({ list: false });
       return;
     }
@@ -952,11 +988,38 @@
     requestAnimationFrame(() => revokeProjectObjectUrl(url));
     dirty = false; say("プロジェクトJSONを書き出しました。");
   }
+  function sanitizeProjectJson(value, depth = 0, budget = null) {
+    // 本体アプリの sanitizeImportedJsonValue と同様に、外部 JSON の危険キーを除去し
+    // プロトタイプ汚染を無効化する。null プロトタイプのオブジェクトへ own-property のみ移し替える。
+    const counter = budget || { nodes: 0 };
+    counter.nodes += 1;
+    if (counter.nodes > MAX_PROJECT_NODE_COUNT) throw new Error("プロジェクトJSONの要素数が多すぎます。");
+    if (depth > MAX_PROJECT_JSON_DEPTH) throw new Error("プロジェクトJSONの階層が深すぎます。");
+    if (typeof value === "string" && value.length > MAX_PROJECT_STRING_LENGTH) {
+      throw new Error("プロジェクトJSON内の文字列が大きすぎます。");
+    }
+    if (Array.isArray(value)) {
+      if (value.length > MAX_PROJECT_ARRAY_LENGTH) throw new Error("プロジェクトJSONの配列が大きすぎます。");
+      return value.map((item) => sanitizeProjectJson(item, depth + 1, counter));
+    }
+    if (value && typeof value === "object") {
+      const keys = Object.keys(value);
+      if (keys.length > MAX_PROJECT_KEYS_PER_OBJECT) throw new Error("プロジェクトJSONの項目数が多すぎます。");
+      const clean = Object.create(null);
+      for (const key of keys) {
+        if (FORBIDDEN_JSON_KEYS.has(key)) continue;
+        clean[key] = sanitizeProjectJson(value[key], depth + 1, counter);
+      }
+      return clean;
+    }
+    return value;
+  }
+
   async function loadProject(file) {
     if (!file) return;
     try {
       if (file.size > MAX_PROJECT_FILE_SIZE) throw new Error("プロジェクトJSONが大きすぎます。");
-      await restore(JSON.parse(await file.text()));
+      await restore(sanitizeProjectJson(JSON.parse(await file.text())));
       dirty = false;
     }
     catch (e) { console.warn(e); say(e instanceof Error ? e.message : "プロジェクト読込に失敗しました。"); }

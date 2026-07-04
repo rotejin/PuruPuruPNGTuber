@@ -16,6 +16,20 @@ PuruPuru PNGTuber vendors the MediaPipe face-tracking runtime assets used by the
 
 MediaPipe assets are loaded from the local `vendor/` directory at runtime only when camera-based face tracking is used. If face tracking is not used, the core PNG avatar rendering can still run without loading MediaPipe.
 
+Vendored MediaPipe file checksums are recorded in `vendor/mediapipe/SHASUMS256.txt`. See `docs/vendor-update.md` for verification and update notes.
+
+### Zen Maru Gothic
+
+- Font: Zen Maru Gothic
+- Author: Yoshimichi Ohira
+- Source: Google Fonts (https://fonts.google.com/specimen/Zen+Maru+Gothic)
+- License: SIL Open Font License, Version 1.1 (see `vendor/fonts/zen-maru-gothic/OFL.txt`)
+- Vendored path: `vendor/fonts/zen-maru-gothic/` (woff2 subsets + `fonts.css`)
+
+The CSP (`style-src 'self'`) prevents loading fonts from the Google Fonts CDN at runtime, so the woff2 files and `@font-face` definitions are vendored locally and loaded via `vendor/fonts/zen-maru-gothic/fonts.css`.
+
+Vendored font checksums are recorded in `vendor/fonts/zen-maru-gothic/SHASUMS256.txt`.
+
 ## Browser and platform APIs
 
 The app uses standard browser APIs including Canvas 2D, WebGL, MediaDevices, Web Audio, FileReader, localStorage, EventSource, and fetch.

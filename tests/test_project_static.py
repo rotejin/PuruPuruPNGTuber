@@ -5,14 +5,18 @@ from pathlib import Path
 from functools import partial
 from collections import Counter
 from http.client import HTTPConnection
+import hashlib
 import json
 import re
+import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import unittest
 
 from scripts.run_local_server import BoundedThreadingHTTPServer, NoCacheHandler, OBS_SNAPSHOT_MAX_BYTES
+from scripts.verify_vendor_checksums import verify_checksum_file
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_AVATAR_DIR = ROOT / "assets" / "demo-avatar"
@@ -36,6 +40,13 @@ class ProjectStaticTests(unittest.TestCase):
             name = normalized.split(" ", 1)[0]
             directives[name] = normalized
         return directives
+
+    def start_local_test_server(self):
+        handler = partial(QuietNoCacheHandler, directory=str(ROOT))
+        server = BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
 
     def python_string_constant(self, source: str, name: str) -> str:
         match = re.search(rf"{re.escape(name)}\s*=\s*\((.*?)\)", source, re.S)
@@ -345,6 +356,29 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("すべて透過PNG", readme)
         self.assertIn("同じキャンバスサイズ・同じ位置合わせ", readme)
 
+    def test_purupuru_package_is_documented_as_self_contained(self) -> None:
+        readme = self.read_text("README.md")
+        usage = self.read_text("docs/usage.md")
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        for text in [
+            "画像込みのポータブルな `.purupuru` アバターパッケージ",
+            "元のPNG素材フォルダに依存しない",
+        ]:
+            self.assertIn(text, readme)
+
+        for text in [
+            "画像込みのポータブルなアバターパッケージ",
+            "別PCへ渡した場合でも、`.purupuru` ファイルがあればキャラを読み込めます",
+            "別PCへ移行する場合は、素材フォルダではなく `.purupuru` を渡すのが安全",
+        ]:
+            self.assertIn(text, usage)
+
+        self.assertIn("画像込み .purupuru 保存", html)
+        self.assertIn("元PNGの場所に依存しないため、バックアップや別PCへの移行に使えます", html)
+        self.assertIn("調整値を画像込みで保存しました", app)
+
     def test_license_is_apache_2_and_assets_are_separate(self) -> None:
         license_text = self.read_text("LICENSE")
         readme = self.read_text("README.md")
@@ -445,10 +479,7 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertNotIn("except Exception:", server)
 
     def test_local_server_security_headers_and_api_guards_runtime(self) -> None:
-        handler = partial(QuietNoCacheHandler, directory=str(ROOT))
-        server = BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
+        server, thread = self.start_local_test_server()
         host, port = server.server_address
 
         def request(method: str, path: str, body: str | None = None, headers: dict[str, str] | None = None):
@@ -574,6 +605,163 @@ class ProjectStaticTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_local_server_static_whitelist_and_api_runtime_edges(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+
+        def request(method: str, path: str, body: str | None = None, headers: dict[str, str] | None = None):
+            connection = HTTPConnection(host, port, timeout=5)
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            payload = response.read()
+            connection.close()
+            return response, payload
+
+        def trusted_headers() -> dict[str, str]:
+            return {
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{port}",
+            }
+
+        def raw_status(request_bytes: bytes) -> int:
+            with socket.create_connection((host, port), timeout=5) as sock:
+                sock.sendall(request_bytes)
+                response = sock.recv(4096)
+            status_line = response.split(b"\r\n", 1)[0].decode("ascii", "replace")
+            return int(status_line.split()[1])
+
+        try:
+            response, _ = request("GET", "/index.html")
+            self.assertEqual(response.status, 200)
+
+            for blocked_path in ["/README.md", "/scripts/run_local_server.py", "/.github/SECURITY.md"]:
+                with self.subTest(path=blocked_path):
+                    response, _ = request("GET", blocked_path)
+                    self.assertEqual(response.status, 404)
+
+            response, _ = request(
+                "POST",
+                "/api/obs/config",
+                json.dumps({"preset": "not-a-preset"}),
+                trusted_headers(),
+            )
+            self.assertEqual(response.status, 200)
+            response, payload = request("GET", "/api/obs/config")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(payload.decode("utf-8"))["preset"], "light")
+
+            chunked_request = (
+                f"POST /api/obs/config HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                f"Origin: http://127.0.0.1:{port}\r\n"
+                "Content-Type: application/json\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "11\r\n{\"preset\":\"high\"}\r\n"
+                "0\r\n\r\n"
+            ).encode("ascii")
+            self.assertEqual(raw_status(chunked_request), 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_local_server_serves_runtime_assets(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+
+        def head(path: str):
+            connection = HTTPConnection(host, port, timeout=5)
+            connection.request("HEAD", path)
+            response = connection.getresponse()
+            response.read()
+            connection.close()
+            return response
+
+        try:
+            for path in [
+                "/index.html",
+                "/styles.css",
+                "/app.js",
+                "/favicon.ico",
+                "/vendor/fonts/zen-maru-gothic/fonts.css",
+                "/vendor/fonts/zen-maru-gothic/zen-maru-gothic-500-001.woff2",
+                "/assets/demo-avatar/default-settings.json",
+                "/assets/demo-avatar/back-hair.png",
+                "/assets/demo-avatar02/default-settings.json",
+                "/assets/demo-avatar02/front-hair.png",
+                "/assets/demo-avatar03/default-settings.json",
+                "/assets/demo-avatar03/items/body.png",
+                "/vendor/mediapipe/tasks-vision/0.10.35/vision_bundle.mjs",
+                "/vendor/mediapipe/tasks-vision/0.10.35/wasm/vision_wasm_internal.wasm",
+                "/vendor/mediapipe/face_landmarker/float16/face_landmarker.task",
+            ]:
+                with self.subTest(path=path):
+                    response = head(path)
+                    self.assertEqual(response.status, 200)
+                    self.assertIsNotNone(response.getheader("Content-Length"))
+                    self.assertIsNotNone(response.getheader("Content-Security-Policy"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_local_server_sse_runtime_normal_path(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+        stream = HTTPConnection(host, port, timeout=5)
+        try:
+            stream.request("GET", "/api/obs/events?lastEventId=999999")
+            response = stream.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "text/event-stream; charset=utf-8")
+
+            post = HTTPConnection(host, port, timeout=5)
+            body = json.dumps({"text": "hello"})
+            post.request(
+                "POST",
+                "/api/obs/input",
+                body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{port}",
+                },
+            )
+            post_response = post.getresponse()
+            post_response.read()
+            post.close()
+            self.assertEqual(post_response.status, 200)
+
+            lines: list[str] = []
+            for _ in range(8):
+                line = response.fp.readline().decode("utf-8")
+                lines.append(line)
+                if line == "\n":
+                    break
+            event_text = "".join(lines)
+            self.assertIn("event: input\n", event_text)
+            self.assertIn('"text":"hello"', event_text)
+        finally:
+            stream.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_vendor_checksum_parser_handles_binary_marker_and_escape(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            base = Path(tmp)
+            payload = b"abc"
+            digest = hashlib.sha256(payload).hexdigest()
+            (base / "file.bin").write_bytes(payload)
+            checksum_file = base / "SHASUMS256.txt"
+
+            checksum_file.write_text(f"{digest} *file.bin\n", encoding="utf-8")
+            self.assertEqual(verify_checksum_file(checksum_file), [])
+
+            checksum_file.write_text(f"{digest}  ../escape.bin\n", encoding="utf-8")
+            errors = verify_checksum_file(checksum_file)
+            self.assertTrue(any("path escapes checksum directory" in error for error in errors))
+
     def test_app_security_and_package_guards_exist(self) -> None:
         app = self.read_text("app.js")
         for forbidden in ["innerHTML", "eval(", "document.write"]:
@@ -605,6 +793,7 @@ class ProjectStaticTests(unittest.TestCase):
             "function pngU8Dimensions(",
             "function validateAvatarImageSize(",
             "validatePngDataUrl(src, name, MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE)",
+            "assetUrl.origin !== window.location.origin",
             "validateAvatarImageSize(pngU8Dimensions(dataUrlToU8(normalized), name), name)",
             "return await applyObsSnapshot(snapshot)",
             "const requiredKeys = Object.keys(AVATAR_PACKAGE_ASSETS)",
@@ -633,6 +822,65 @@ class ProjectStaticTests(unittest.TestCase):
         ]:
             self.assertIn(expected, app)
 
+    def test_purupuru_item_layers_are_capped_during_parse(self) -> None:
+        app = self.read_text("app.js")
+        parse_body = self.js_function_body(app, "async function parsePuruPuruPackageBlob(")
+
+        self.assertIn("const cappedItemLayers = settingsPayload.itemLayers.slice(0, MAX_ITEM_LAYER_COUNT);", parse_body)
+        self.assertIn("settingsPayload.itemLayers = cappedItemLayers;", parse_body)
+        self.assertIn("hydratedSettingsPayload.itemLayers = cappedItemLayers.map", parse_body)
+        self.assertIn("let itemImageBytesTotal = 0;", parse_body)
+        self.assertIn("itemImageBytesTotal += itemU8.length;", parse_body)
+        self.assertIn("if (itemImageBytesTotal > MAX_PURUPURU_UNZIPPED_SIZE)", parse_body)
+        self.assertNotIn("settingsPayload.itemLayers.map((layer", parse_body)
+
+    def test_active_character_id_is_reassigned_before_deleted_active_apply(self) -> None:
+        app = self.read_text("app.js")
+        delete_body = self.js_function_body(app, "async function deleteCharacterProfile(")
+
+        delete_index = delete_body.index("await deleteCharacterProfileRecord(targetId);")
+        active_index = delete_body.index("activeCharacterId = fallbackRecord.id;", delete_index)
+        remember_index = delete_body.index("rememberActiveCharacterId(fallbackRecord.id);", active_index)
+        apply_index = delete_body.index(
+            "await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true, skipActiveUpdate: true });",
+            remember_index,
+        )
+        self.assertLess(delete_index, active_index)
+        self.assertLess(active_index, remember_index)
+        self.assertLess(remember_index, apply_index)
+        self.assertIn("await touchCharacterProfile(fallbackRecord.id);", delete_body)
+        self.assertNotIn("await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true });", delete_body)
+
+    def test_muted_text_color_meets_wcag_aa_for_small_text(self) -> None:
+        css = self.read_text("styles.css")
+
+        def hex_rgb(value: str) -> tuple[int, int, int]:
+            value = value.lstrip("#")
+            return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+        def srgb_to_linear(channel: int) -> float:
+            value = channel / 255
+            if value <= 0.03928:
+                return value / 12.92
+            return ((value + 0.055) / 1.055) ** 2.4
+
+        def luminance(rgb: tuple[int, int, int]) -> float:
+            red, green, blue = (srgb_to_linear(channel) for channel in rgb)
+            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+        def contrast(foreground: tuple[int, int, int], background: tuple[int, int, int]) -> float:
+            high, low = sorted([luminance(foreground), luminance(background)], reverse=True)
+            return (high + 0.05) / (low + 0.05)
+
+        def blend(foreground: tuple[int, int, int], alpha: float, background: tuple[int, int, int]) -> tuple[int, int, int]:
+            return tuple(round(foreground[index] * alpha + background[index] * (1 - alpha)) for index in range(3))
+
+        self.assertIn("--muted: #6f5f50;", css)
+        self.assertIn("--muted: rgba(242, 232, 220, 0.7);", css)
+        self.assertGreaterEqual(contrast(hex_rgb("#6f5f50"), hex_rgb("#fff8ee")), 4.5)
+        dark_muted = blend(hex_rgb("#f2e8dc"), 0.7, hex_rgb("#3a3531"))
+        self.assertGreaterEqual(contrast(dark_muted, hex_rgb("#3a3531")), 4.5)
+
     def test_js_runtime_security_and_package_guards(self) -> None:
         result = subprocess.run(
             ["node", str(ROOT / "tests" / "js_runtime_checks.mjs")],
@@ -650,9 +898,12 @@ class ProjectStaticTests(unittest.TestCase):
         warp_body = self.js_function_body(app, "function hairWarpPoint(")
 
         # ★5: 毛先ほど減衰比を下げ、ハリのあるオーバーシュートを許容する。
-        self.assertIn("const c1 = lerp(24, 7.5, t) * damping", spring_body)
-        self.assertIn("const c2 = lerp(29, 12, t) * damping", spring_body)
-        self.assertIn("const cP = lerp(21, 6.5, t) * damping", spring_body)
+        self.assertIn("const k1 = lerp(190, 100, t) * stiffness", spring_body)
+        self.assertIn("const c1 = lerp(24, 9, t) * damping", spring_body)
+        self.assertIn("const k2 = lerp(260, 170, t) * stiffness", spring_body)
+        self.assertIn("const c2 = lerp(29, 13, t) * damping", spring_body)
+        self.assertIn("const kP = lerp(132, 56, t) * stiffness", spring_body)
+        self.assertIn("const cP = lerp(21, 6.7, t) * damping", spring_body)
 
         # ★6: angle/head だけ follow-the-leader 化し、wave は段ごとのターゲットを維持する。
         self.assertIn("const HAIR_CHAIN_FOLLOW = 0.68", app)
@@ -1107,6 +1358,10 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("outputObjectUrls = outs.map((o) => o.url)", show_outputs_body)
         restore_body = self.js_function_body(standalone, "async function restore(")
         self.assertIn("revokeOutputObjectUrls()", restore_body)
+        down_body = self.js_function_body(standalone, "function down(")
+        self.assertIn("const before = snapshot(l);", down_body)
+        self.assertIn("if (!flood(l, p))", down_body)
+        self.assertIn("app.undo.push({ id: l.id, image: before });", down_body)
 
     def test_character_wizard_incremental_points_and_grouped_hair_steps_are_wired(self) -> None:
         app = self.read_text("app.js")
@@ -1260,6 +1515,7 @@ class ProjectStaticTests(unittest.TestCase):
             ".agents/",
             "*.purupuru",
             "assets/*_backup_*/",
+            "note_draft_*.md",
             ".DS_Store",
             "Thumbs.db",
             ".vscode/",
@@ -1286,6 +1542,7 @@ class ProjectStaticTests(unittest.TestCase):
 
     def test_development_checks_and_ci_actions_are_pinned(self) -> None:
         readme = self.read_text("README.md")
+        usage = self.read_text("docs/usage.md")
         contributing = self.read_text(".github/CONTRIBUTING.md")
         workflow = self.read_text(".github/workflows/ci.yml")
         for command in [
@@ -1293,14 +1550,20 @@ class ProjectStaticTests(unittest.TestCase):
             "node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js",
             "node tests/js_runtime_checks.mjs",
             "python -m py_compile scripts/run_local_server.py",
+            "python -m py_compile scripts/verify_vendor_checksums.py",
+            "python -m py_compile scripts/fetch_fonts.py",
+            "python scripts/verify_vendor_checksums.py",
             "python -m unittest tests.test_project_static",
         ]:
             self.assertIn(command, readme)
+            self.assertIn(command, usage)
             self.assertIn(command, contributing)
             self.assertIn(command, workflow)
         self.assertNotIn("uses: actions/checkout@v4", workflow)
         self.assertNotIn("uses: actions/setup-python@v5", workflow)
         self.assertNotIn("uses: actions/setup-node@v4", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("cancel-in-progress: true", workflow)
         self.assertRegex(workflow, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(workflow, r"uses: actions/setup-python@[0-9a-f]{40}")
         self.assertRegex(workflow, r"uses: actions/setup-node@[0-9a-f]{40}")
@@ -1373,6 +1636,131 @@ class ProjectStaticTests(unittest.TestCase):
                 relative.encode("ascii")
             except UnicodeEncodeError:
                 self.fail(f"Use ASCII file and directory names for public repository paths: {relative}")
+
+    def test_section_nav_is_wired(self) -> None:
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        self.assertIn('"purupuru-section-v1"', app)
+        self.assertIn('"purupuru-workspace-v1"', app)
+        self.assertIn('"purupuru-adjust-category-v1"', app)
+        # 旧2階層タブからの移行読取分岐が残っていること。
+        self.assertIn("WORKSPACE_STORAGE_KEY", app)
+        self.assertIn("ADJUST_CATEGORY_STORAGE_KEY", app)
+        self.assertIn('legacyWorkspace === "adjust"', app)
+
+        target_keys = set(re.findall(r'data-section-target="([^"]+)"', html))
+        page_keys = set(re.findall(r'data-section-page="([^"]+)"', html))
+        expected_keys = {
+            "start",
+            "layout",
+            "face",
+            "mouth",
+            "eyes",
+            "hair",
+            "look",
+            "items",
+            "output",
+            "advanced",
+        }
+        self.assertEqual(target_keys, expected_keys)
+        self.assertEqual(page_keys, expected_keys)
+        self.assertEqual(len(target_keys), 10)
+
+        self.assertNotIn("function setWorkspacePage", app)
+        self.assertNotIn("function setAdjustCategory", app)
+        self.assertNotIn("function bindWorkspaceTabs", app)
+        self.assertNotIn("function bindAdjustTabs", app)
+
+    def test_live_bar_is_wired(self) -> None:
+        html = self.read_text("index.html")
+        css = self.read_text("styles.css")
+        app = self.read_text("app.js")
+
+        live_bar_match = re.search(r'<div id="liveBar" class="live-bar"[^>]*>.*?\n  </div>', html, re.DOTALL)
+        self.assertIsNotNone(live_bar_match)
+        live_bar_html = live_bar_match.group(0)
+
+        for fragment in [
+            'id="micButton"',
+            'id="faceTrackButton"',
+            'id="demoTalkButton"',
+            'id="blinkButton"',
+            'id="mouseFollowButton"',
+            'id="idleMotionButton"',
+            'id="centerButton"',
+            'id="faceCalibrateButton"',
+            'id="statusPill"',
+            'id="audioMeter" class="meter"',
+            'id="meterFill"',
+            'id="meterHalfLine"',
+            'id="meterFullLine"',
+            'id="mouthReadout"',
+            'id="angleReadout"',
+            'id="faceTrackStatus"',
+            'id="audioError"',
+        ]:
+            self.assertIn(fragment, live_bar_html)
+
+        # ライブバーは control-card の外(body直下)に独立配置されていること。
+        self.assertNotIn('<div class="control-sticky-area">', html)
+        self.assertLess(html.index('id="liveBar"'), html.index('class="control-card"'))
+
+        self.assertIn("body.obs-mode .live-bar", css)
+        self.assertIn(".chip-solid", css)
+        self.assertIn(".chip-quiet", css)
+        self.assertIn(".chip-divider", css)
+        self.assertIn('.chip[aria-pressed="true"]', css)
+
+        # チップのラベルは .chip-label 経由で書き換える(SVGアイコンを壊さないため)。
+        self.assertIn("function setButtonLabel(button, text)", app)
+        for button_id in [
+            "micButton",
+            "faceTrackButton",
+            "mouseFollowButton",
+            "demoTalkButton",
+            "blinkButton",
+            "idleMotionButton",
+        ]:
+            self.assertNotIn(f"ui.{button_id}.textContent =", app)
+
+    def test_all_app_js_id_selectors_exist_in_html(self) -> None:
+        """app.js が querySelector(All)("#xxx") で参照する全IDリテラルが、
+        index.html に id="xxx" として実在することを悉皆チェックする。
+
+        対象外（意図的に除外）:
+        - `#startupError` : 起動時エラー表示のために app.js が
+          document.createElement 等で動的生成するIDで、index.html には
+          最初から存在しない。
+        - bindRangePreviewControl などが使うテンプレートリテラルの
+          `` `#${id}` `` 形式の動的セレクタ。下の正規表現は "#xxx" /
+          '#xxx' というリテラル文字列だけにマッチするため、これらは
+          そもそも抽出対象に含まれない（別途 grep で確認済み）。
+        """
+        html = self.read_text("index.html")
+        app = self.read_text("app.js")
+
+        KNOWN_DYNAMIC_IDS = {"startupError"}
+
+        referenced_ids = set(
+            re.findall(r'querySelector(?:All)?\(\s*["\']#([A-Za-z0-9_-]+)["\']\s*\)', app)
+        )
+        self.assertTrue(
+            referenced_ids,
+            "querySelector(\"#...\") のIDリテラルが app.js から1件も抽出できませんでした。",
+        )
+
+        html_ids = set(re.findall(r'\bid="([^"]+)"', html))
+
+        missing = sorted(
+            id_ for id_ in referenced_ids
+            if id_ not in html_ids and id_ not in KNOWN_DYNAMIC_IDS
+        )
+        self.assertEqual(
+            missing,
+            [],
+            f"app.js が参照するIDが index.html に存在しません: {missing}",
+        )
 
 
 if __name__ == "__main__":

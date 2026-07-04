@@ -137,11 +137,19 @@ const definitions = [
   extractConst("FORBIDDEN_JSON_KEYS"),
   extractConst("MAX_AVATAR_IMAGE_EDGE"),
   extractConst("MAX_AVATAR_IMAGE_PIXELS"),
+  extractConst("MAX_ITEM_IMAGE_FILE_SIZE"),
+  extractConst("MAX_ITEM_IMAGE_EDGE"),
+  extractConst("MAX_ITEM_IMAGE_PIXELS"),
+  extractConst("MAX_ITEM_LAYER_COUNT"),
   extractConst("PNG_DATA_URL_PREFIX"),
   extractConst("PNG_BASE64_SIGNATURE"),
   extractConst("MAX_PURUPURU_PACKAGE_SIZE"),
   extractConst("MAX_PURUPURU_UNZIPPED_SIZE"),
   extractConst("MAX_PURUPURU_ENTRY_COUNT"),
+  extractConst("MAX_PURUPURU_MANIFEST_JSON_BYTES"),
+  extractConst("MAX_PURUPURU_SETTINGS_JSON_BYTES"),
+  extractConst("MAX_THUMBNAIL_BYTES"),
+  extractConst("MAX_THUMBNAIL_EDGE"),
   extractConst("ZIP_LOCAL_FILE_HEADER_SIG"),
   extractConst("ZIP_CENTRAL_DIRECTORY_SIG"),
   extractConst("ZIP_END_OF_CENTRAL_DIRECTORY_SIG"),
@@ -149,7 +157,9 @@ const definitions = [
   extractConst("ZIP_STORE_METHOD"),
   extractConst("AVATAR_PACKAGE_ASSETS"),
   extractFunction("function sanitizeImportedJsonValue("),
+  extractFunction("function jsonByteSize("),
   extractFunction("function parseSettingsJson("),
+  extractFunction("function parseSettingsJsonBytes("),
   extractFunction("function textToU8("),
   extractFunction("function u8ToText("),
   "let crc32Table = null;",
@@ -169,6 +179,8 @@ const definitions = [
   extractFunction("function assertPngU8("),
   extractFunction("function pngU8Dimensions("),
   extractFunction("function validateAvatarImageSize("),
+  extractFunction("function validateItemImageU8("),
+  extractFunction("function validateThumbnailU8("),
   extractFunction("function avatarImageDimensions("),
   extractFunction("function validateAvatarImageDimensions("),
   `async function loadPngImageFromU8(u8, name = "PNG") {
@@ -245,7 +257,7 @@ function tinyPngBytes(width = 900, height = 900) {
   return u8;
 }
 
-function minimalPackageBlob({ manifestPatch = {}, omitManifest = false, omitSettings = false } = {}) {
+function minimalPackageBlob({ manifestPatch = {}, settingsPatch = {}, extraFiles = {}, omitManifest = false, omitSettings = false } = {}) {
   const manifest = {
     format: "purupuru-avatar-package",
     settings: "settings.json",
@@ -255,9 +267,10 @@ function minimalPackageBlob({ manifestPatch = {}, omitManifest = false, omitSett
   };
   const files = Object.create(null);
   if (!omitManifest) files["manifest.json"] = jsonBytes(manifest);
-  if (!omitSettings) files["settings.json"] = jsonBytes({ state: {}, itemLayers: [] });
+  if (!omitSettings) files["settings.json"] = jsonBytes({ state: {}, itemLayers: [], ...settingsPatch });
   for (const path of Object.values(AVATAR_PACKAGE_ASSETS)) files[path] = tinyPngBytes();
   files["thumbnail.png"] = tinyPngBytes();
+  for (const [path, data] of Object.entries(extraFiles)) files[path] = data;
   return new Blob([buildStoredZip(files)], { type: "application/vnd.purupuru.avatar+zip" });
 }
 
@@ -295,6 +308,8 @@ assert.equal(
 expectThrow(() => sanitizeImportedJsonValue(PNG_DATA_URL_PREFIX + "A".repeat(MAX_JSON_DATA_URL_STRING_LENGTH + 1)), /文字列/);
 const manyNodes = Array.from({ length: MAX_JSON_ARRAY_LENGTH }, () => Array.from({ length: 26 }, () => 0));
 expectThrow(() => sanitizeImportedJsonValue(manyNodes), /要素数/);
+expectThrow(() => parseSettingsJson('{"x":1}'.padEnd(MAX_PURUPURU_SETTINGS_JSON_BYTES + 1, " ")), /大きすぎ/);
+expectThrow(() => parseSettingsJsonBytes(textToU8("{}".padEnd(MAX_PURUPURU_MANIFEST_JSON_BYTES + 1, " ")), "manifest.json", MAX_PURUPURU_MANIFEST_JSON_BYTES), /大きすぎ/);
 
 const pngUrl = PNG_DATA_URL_PREFIX + PNG_BASE64_SIGNATURE + "AAAA";
 assert.equal(validatePngDataUrl(pngUrl, "PNG"), pngUrl);
@@ -302,6 +317,8 @@ expectThrow(() => validatePngDataUrl("data:text/plain;base64,AAAA", "PNG"), /PNG
 expectThrow(() => validatePngDataUrl(PNG_DATA_URL_PREFIX + "AAAA", "PNG"), /PNG/);
 expectThrow(() => validatePngDataUrl(pngUrl, "PNG", 12), /大きすぎ/);
 assert.deepEqual(pngU8Dimensions(tinyPngBytes(320, 240), "PNG"), { w: 320, h: 240 });
+validateThumbnailU8(tinyPngBytes(320, 240), "thumbnail.png");
+expectThrow(() => validateThumbnailU8(tinyPngBytes(MAX_THUMBNAIL_EDGE + 1, 1), "thumbnail.png"), /寸法/);
 expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE + 1, h: 1 }, "PNG"), /大きすぎ/);
 expectThrow(() => validateAvatarImageSize({ w: MAX_AVATAR_IMAGE_EDGE, h: MAX_AVATAR_IMAGE_EDGE + 1 }, "PNG"), /大きすぎ/);
 expectThrow(() => pngU8Dimensions(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), "PNG"), /PNG/);
@@ -339,6 +356,19 @@ assert.equal(parsed.settingsPayload.avatarImageSize.width, 900);
 assert.equal(parsed.settingsPayload.avatarImageSize.height, 900);
 assert.equal(Object.keys(parsed.avatarImageBlobs).length, Object.keys(AVATAR_PACKAGE_ASSETS).length);
 
+const tooManyItemLayers = Array.from({ length: MAX_ITEM_LAYER_COUNT + 5 }, (_, index) => ({
+  id: index + 1,
+  name: "item " + (index + 1),
+  file: "items/shared.png",
+}));
+const cappedItems = await parsePuruPuruPackageBlob(minimalPackageBlob({
+  settingsPatch: { itemLayers: tooManyItemLayers },
+  extraFiles: { "items/shared.png": tinyPngBytes(32, 32) },
+}));
+assert.equal(cappedItems.settingsPayload.itemLayers.length, MAX_ITEM_LAYER_COUNT);
+assert.equal(cappedItems.hydratedSettingsPayload.itemLayers.length, MAX_ITEM_LAYER_COUNT);
+assert.equal(Object.keys(cappedItems.itemImageBlobs).length, MAX_ITEM_LAYER_COUNT);
+
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ omitManifest: true })), /manifest/);
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ omitSettings: true })), /settings/);
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ manifestPatch: { settings: "../settings.json" } })), /不正/);
@@ -354,6 +384,5 @@ await vm.runInNewContext(testProgram, {
   DataView,
   btoa: (value) => Buffer.from(value, "binary").toString("base64"),
 });
-
 
 
