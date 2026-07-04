@@ -5,14 +5,18 @@ from pathlib import Path
 from functools import partial
 from collections import Counter
 from http.client import HTTPConnection
+import hashlib
 import json
 import re
+import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import unittest
 
 from scripts.run_local_server import BoundedThreadingHTTPServer, NoCacheHandler, OBS_SNAPSHOT_MAX_BYTES
+from scripts.verify_vendor_checksums import verify_checksum_file
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_AVATAR_DIR = ROOT / "assets" / "demo-avatar"
@@ -36,6 +40,13 @@ class ProjectStaticTests(unittest.TestCase):
             name = normalized.split(" ", 1)[0]
             directives[name] = normalized
         return directives
+
+    def start_local_test_server(self):
+        handler = partial(QuietNoCacheHandler, directory=str(ROOT))
+        server = BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread
 
     def python_string_constant(self, source: str, name: str) -> str:
         match = re.search(rf"{re.escape(name)}\s*=\s*\((.*?)\)", source, re.S)
@@ -468,10 +479,7 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertNotIn("except Exception:", server)
 
     def test_local_server_security_headers_and_api_guards_runtime(self) -> None:
-        handler = partial(QuietNoCacheHandler, directory=str(ROOT))
-        server = BoundedThreadingHTTPServer(("127.0.0.1", 0), handler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
+        server, thread = self.start_local_test_server()
         host, port = server.server_address
 
         def request(method: str, path: str, body: str | None = None, headers: dict[str, str] | None = None):
@@ -597,6 +605,123 @@ class ProjectStaticTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_local_server_static_whitelist_and_api_runtime_edges(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+
+        def request(method: str, path: str, body: str | None = None, headers: dict[str, str] | None = None):
+            connection = HTTPConnection(host, port, timeout=5)
+            connection.request(method, path, body=body, headers=headers or {})
+            response = connection.getresponse()
+            payload = response.read()
+            connection.close()
+            return response, payload
+
+        def trusted_headers() -> dict[str, str]:
+            return {
+                "Content-Type": "application/json",
+                "Origin": f"http://127.0.0.1:{port}",
+            }
+
+        def raw_status(request_bytes: bytes) -> int:
+            with socket.create_connection((host, port), timeout=5) as sock:
+                sock.sendall(request_bytes)
+                response = sock.recv(4096)
+            status_line = response.split(b"\r\n", 1)[0].decode("ascii", "replace")
+            return int(status_line.split()[1])
+
+        try:
+            response, _ = request("GET", "/index.html")
+            self.assertEqual(response.status, 200)
+
+            for blocked_path in ["/README.md", "/scripts/run_local_server.py", "/.github/SECURITY.md"]:
+                with self.subTest(path=blocked_path):
+                    response, _ = request("GET", blocked_path)
+                    self.assertEqual(response.status, 404)
+
+            response, _ = request(
+                "POST",
+                "/api/obs/config",
+                json.dumps({"preset": "not-a-preset"}),
+                trusted_headers(),
+            )
+            self.assertEqual(response.status, 200)
+            response, payload = request("GET", "/api/obs/config")
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(payload.decode("utf-8"))["preset"], "light")
+
+            chunked_request = (
+                f"POST /api/obs/config HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                f"Origin: http://127.0.0.1:{port}\r\n"
+                "Content-Type: application/json\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "11\r\n{\"preset\":\"high\"}\r\n"
+                "0\r\n\r\n"
+            ).encode("ascii")
+            self.assertEqual(raw_status(chunked_request), 400)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_local_server_sse_runtime_normal_path(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+        stream = HTTPConnection(host, port, timeout=5)
+        try:
+            stream.request("GET", "/api/obs/events?lastEventId=999999")
+            response = stream.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Content-Type"), "text/event-stream; charset=utf-8")
+
+            post = HTTPConnection(host, port, timeout=5)
+            body = json.dumps({"text": "hello"})
+            post.request(
+                "POST",
+                "/api/obs/input",
+                body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Origin": f"http://127.0.0.1:{port}",
+                },
+            )
+            post_response = post.getresponse()
+            post_response.read()
+            post.close()
+            self.assertEqual(post_response.status, 200)
+
+            lines: list[str] = []
+            for _ in range(8):
+                line = response.fp.readline().decode("utf-8")
+                lines.append(line)
+                if line == "\n":
+                    break
+            event_text = "".join(lines)
+            self.assertIn("event: input\n", event_text)
+            self.assertIn('"text":"hello"', event_text)
+        finally:
+            stream.close()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_vendor_checksum_parser_handles_binary_marker_and_escape(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT) as tmp:
+            base = Path(tmp)
+            payload = b"abc"
+            digest = hashlib.sha256(payload).hexdigest()
+            (base / "file.bin").write_bytes(payload)
+            checksum_file = base / "SHASUMS256.txt"
+
+            checksum_file.write_text(f"{digest} *file.bin\n", encoding="utf-8")
+            self.assertEqual(verify_checksum_file(checksum_file), [])
+
+            checksum_file.write_text(f"{digest}  ../escape.bin\n", encoding="utf-8")
+            errors = verify_checksum_file(checksum_file)
+            self.assertTrue(any("path escapes checksum directory" in error for error in errors))
+
     def test_app_security_and_package_guards_exist(self) -> None:
         app = self.read_text("app.js")
         for forbidden in ["innerHTML", "eval(", "document.write"]:
@@ -628,6 +753,7 @@ class ProjectStaticTests(unittest.TestCase):
             "function pngU8Dimensions(",
             "function validateAvatarImageSize(",
             "validatePngDataUrl(src, name, MAX_OBS_SNAPSHOT_AVATAR_IMAGE_DATA_URL_SIZE)",
+            "assetUrl.origin !== window.location.origin",
             "validateAvatarImageSize(pngU8Dimensions(dataUrlToU8(normalized), name), name)",
             "return await applyObsSnapshot(snapshot)",
             "const requiredKeys = Object.keys(AVATAR_PACKAGE_ASSETS)",
@@ -1192,6 +1318,10 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("outputObjectUrls = outs.map((o) => o.url)", show_outputs_body)
         restore_body = self.js_function_body(standalone, "async function restore(")
         self.assertIn("revokeOutputObjectUrls()", restore_body)
+        down_body = self.js_function_body(standalone, "function down(")
+        self.assertIn("const before = snapshot(l);", down_body)
+        self.assertIn("if (!flood(l, p))", down_body)
+        self.assertIn("app.undo.push({ id: l.id, image: before });", down_body)
 
     def test_character_wizard_incremental_points_and_grouped_hair_steps_are_wired(self) -> None:
         app = self.read_text("app.js")
@@ -1378,6 +1508,7 @@ class ProjectStaticTests(unittest.TestCase):
             "node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js",
             "node tests/js_runtime_checks.mjs",
             "python -m py_compile scripts/run_local_server.py",
+            "python -m py_compile scripts/fetch_fonts.py",
             "python -m unittest tests.test_project_static",
         ]:
             self.assertIn(command, readme)
@@ -1386,6 +1517,8 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertNotIn("uses: actions/checkout@v4", workflow)
         self.assertNotIn("uses: actions/setup-python@v5", workflow)
         self.assertNotIn("uses: actions/setup-node@v4", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn("cancel-in-progress: true", workflow)
         self.assertRegex(workflow, r"uses: actions/checkout@[0-9a-f]{40}")
         self.assertRegex(workflow, r"uses: actions/setup-python@[0-9a-f]{40}")
         self.assertRegex(workflow, r"uses: actions/setup-node@[0-9a-f]{40}")

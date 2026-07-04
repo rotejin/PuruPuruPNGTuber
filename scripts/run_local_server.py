@@ -22,6 +22,7 @@ FALLBACK_PORT_END = 8050
 TRUSTED_API_HOSTS = {"127.0.0.1", "localhost"}
 OBS_SNAPSHOT_MAX_BYTES = 24 * 1024 * 1024
 MAX_LOCAL_SERVER_THREADS = 64
+REQUEST_HEADER_READ_TIMEOUT_SECONDS = 5.0
 REQUEST_BODY_READ_TIMEOUT_SECONDS = 2.0
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
@@ -151,11 +152,15 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".woff2": "font/woff2"}
 
     def handle_one_request(self) -> None:
+        old_timeout = self.connection.gettimeout()
+        self.connection.settimeout(REQUEST_HEADER_READ_TIMEOUT_SECONDS)
         try:
             super().handle_one_request()
-        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, TimeoutError, OSError):
             self.close_connection = True
             return
+        finally:
+            self.connection.settimeout(old_timeout)
 
     def read_json_body(self, max_bytes: int) -> dict:
         content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
@@ -262,9 +267,16 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
             return False
         if any(part.startswith(".") for part in path.parts):
             return False
-        if request_path.endswith("/"):
-            return True
-        return path.suffix.lower() in self.allowed_extensions
+        allowed = request_path.endswith("/") or path.suffix.lower() in self.allowed_extensions
+        if not allowed:
+            return False
+        try:
+            root = Path(self.directory).resolve()
+            target = (root / request_path.lstrip("/")).resolve()
+            target.relative_to(root)
+        except (OSError, ValueError):
+            return False
+        return True
 
     def handle_obs_events(self) -> None:
         self.send_response(200)

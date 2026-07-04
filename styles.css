@@ -1656,6 +1656,14 @@ body.stage-bg-dark .meter-threshold {
   margin: 0;
 }
 
+@media (max-width: 560px) {
+  .live-bar {
+    right: 10px;
+    left: 10px;
+    max-width: none;
+  }
+}
+
 /* 変更済み表現（baseline からの差分）: 値ピルの強調 + ラベル末尾のアクセントドット */
 .control-row.is-changed,
 .check-row.is-changed,

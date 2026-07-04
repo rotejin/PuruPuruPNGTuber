@@ -91,7 +91,7 @@
 
   <div id="liveBar" class="live-bar" aria-label="ライブ操作">
     <div class="live-chips">
-      <button id="micButton" class="chip chip-solid" type="button">
+      <button id="micButton" class="chip chip-solid" type="button" aria-pressed="false">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"></rect><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0"></path><path d="M10 15v2.5"></path></svg>
         <span class="chip-label">マイク開始</span>
       </button>
@@ -815,11 +815,11 @@
     </div>
   </aside>
 
-  <section id="drawingAvatarPanel" class="drawing-avatar-panel" aria-label="お絵描きで新キャラ作成" hidden>
+  <section id="drawingAvatarPanel" class="drawing-avatar-panel" role="dialog" aria-modal="true" aria-labelledby="drawingAvatarTitle" tabindex="-1" hidden>
     <div class="drawing-avatar-window">
       <header class="drawing-avatar-header">
         <div class="drawing-avatar-header-text">
-          <h2>お絵描きで新キャラ作成</h2>
+          <h2 id="drawingAvatarTitle">お絵描きで新キャラ作成</h2>
           <p id="drawingAvatarStatus" class="small-note" role="status" aria-live="polite">描く対象を選んで、キャンバスに描いてください。</p>
         </div>
         <div class="drawing-avatar-header-actions">

@@ -696,10 +696,20 @@
     if (p.x < -app.size || p.x > W + app.size || p.y < -app.size || p.y > H + app.size) return;
     if (l.muted) ensureVisible(l);
     if (app.tool === "fill") {
-      if (p.x < 0 || p.x > W || p.y < 0 || p.y > H) return;
-      pushUndo(l);
-      if (!flood(l, p)) { app.undo.pop(); say("同じ色のため塗りつぶしませんでした。"); }
-      else say(`${l.label} を塗りつぶしました。`);
+      if (p.x < 0 || p.x >= W || p.y < 0 || p.y >= H) return;
+      // 変化を確定させてから undo に積む。先に push すると redo がクリアされ、
+      // 「同じ色で無変化」だった場合にやり直し履歴が失われてしまう。
+      const before = snapshot(l);
+      if (!flood(l, p)) {
+        say("同じ色のため塗りつぶしませんでした。");
+      } else {
+        app.undo.push({ id: l.id, image: before });
+        if (app.undo.length > MAX_HISTORY) app.undo.shift();
+        app.redo.length = 0;
+        enforceHistoryBudget();
+        dirty = true;
+        say(`${l.label} を塗りつぶしました。`);
+      }
       update({ list: false });
       return;
     }

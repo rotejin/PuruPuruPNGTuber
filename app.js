@@ -818,6 +818,8 @@
   let faceRigMetricsCacheDepthSource = null;
   let faceRigMetricsCacheEyesSource = null;
   let faceRigMetricsCache = null;
+  let faceMeshSpecCacheFrame = -1;
+  const faceMeshSpecCache = { warpFn: null, cols: 14, rows: 10 };
   let neckPivotCacheFrame = -1;
   let neckPivotCacheSource = null;
   let neckPivotCacheDepthSource = null;
@@ -1567,8 +1569,9 @@
 
   function findZipEndOfCentralDirectory(zipU8) {
     const min = Math.max(0, zipU8.length - 22 - 0xffff);
+    const view = new DataView(zipU8.buffer, zipU8.byteOffset, zipU8.byteLength);
     for (let i = zipU8.length - 22; i >= min; i -= 1) {
-      if (new DataView(zipU8.buffer, zipU8.byteOffset + i, 4).getUint32(0, true) === ZIP_END_OF_CENTRAL_DIRECTORY_SIG) {
+      if (view.getUint32(i, true) === ZIP_END_OF_CENTRAL_DIRECTORY_SIG) {
         return i;
       }
     }
@@ -1805,7 +1808,12 @@
   }
 
   function resolveSettingsAssetUrl(path, settingsUrl = DEFAULT_SETTINGS_URL) {
-    return new URL(String(path || ""), new URL(settingsUrl, window.location.href)).href;
+    const baseUrl = new URL(settingsUrl, window.location.href);
+    const assetUrl = new URL(String(path || ""), baseUrl);
+    if (assetUrl.origin !== window.location.origin) {
+      throw new Error("設定内PNGアイテムは同一オリジンのパスだけ対応しています。");
+    }
+    return assetUrl.href;
   }
 
   async function fetchPngDataUrl(path, name = "PNGアイテム", settingsUrl = DEFAULT_SETTINGS_URL) {
@@ -1926,6 +1934,7 @@
     faceCenterCacheFrame = -1;
     faceDepthAnchorsCacheFrame = -1;
     faceRigMetricsCacheFrame = -1;
+    faceMeshSpecCacheFrame = -1;
     neckPivotCacheFrame = -1;
     return true;
   }
@@ -4407,6 +4416,7 @@
   let drawingAvatarExpressionPreviewLastAt = 0;
   let drawingAvatarExpressionPreviewTimer = null;
   let drawingAvatarResizeObserver = null;
+  let drawingAvatarPreviouslyFocused = null;
 
   function createDrawingAvatarLayerCanvas() {
     const canvasElement = document.createElement("canvas");
@@ -5154,9 +5164,68 @@
     scheduleDrawingAvatarRender();
   }
 
+  function drawingAvatarFocusableElements() {
+    const panel = ui.drawingAvatarPanel;
+    if (!panel || panel.hidden) return [];
+    return Array.from(panel.querySelectorAll("button, input, select, textarea, a[href], [tabindex]:not([tabindex=\"-1\"])"))
+      .filter((element) =>
+        element instanceof HTMLElement &&
+        !element.hidden &&
+        !element.hasAttribute("disabled") &&
+        element.getClientRects().length > 0
+      );
+  }
+
+  function focusDrawingAvatarInitialControl() {
+    requestAnimationFrame(() => {
+      if (!drawingAvatarPanelOpen()) return;
+      const focusable = drawingAvatarFocusableElements();
+      const target = ui.drawingAvatarFinishButton || focusable[0] || ui.drawingAvatarPanel;
+      target?.focus?.({ preventScroll: true });
+    });
+  }
+
+  function restoreDrawingAvatarFocus() {
+    const target = drawingAvatarPreviouslyFocused;
+    drawingAvatarPreviouslyFocused = null;
+    if (target instanceof HTMLElement && document.contains(target)) {
+      target.focus({ preventScroll: true });
+    }
+  }
+
+  function trapDrawingAvatarFocus(event) {
+    const panel = ui.drawingAvatarPanel;
+    if (!panel || panel.hidden) return;
+    const focusable = drawingAvatarFocusableElements();
+    if (!focusable.length) {
+      event.preventDefault();
+      panel.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (!panel.contains(active)) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    } else if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus({ preventScroll: true });
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus({ preventScroll: true });
+    }
+  }
+
   function openDrawingAvatarPanel() {
     if (OBS_MODE || !ui.drawingAvatarPanel) return;
     const resumed = Boolean(drawingAvatarSession);
+    const wasOpen = drawingAvatarPanelOpen();
+    if (!wasOpen) {
+      drawingAvatarPreviouslyFocused = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    }
     if (!drawingAvatarSession) drawingAvatarSession = createDrawingAvatarSession();
     ui.drawingAvatarPanel.hidden = false;
     setDrawingAvatarStatus(
@@ -5169,6 +5238,7 @@
     buildDrawingAvatarExpressionPreviews();
     drawingAvatarAutoFit = true;
     updateDrawingAvatarUi();
+    if (!wasOpen) focusDrawingAvatarInitialControl();
     requestAnimationFrame(() => resizeDrawingAvatarViewport({ forceFit: true }));
   }
 
@@ -5184,6 +5254,7 @@
     if (drawingAvatarSession) {
       setEditStatus("お絵描きを閉じました。描きかけの内容は「お絵描きで新キャラ作成」からいつでも再開できます。");
     }
+    restoreDrawingAvatarFocus();
   }
 
   async function openDrawingAvatarPanelForActiveCharacterEdit() {
@@ -6284,6 +6355,7 @@
       drawingAvatarSession = null;
       drawingAvatarStroke = null;
       if (ui.drawingAvatarPanel) ui.drawingAvatarPanel.hidden = true;
+      restoreDrawingAvatarFocus();
       if (session.mode === "edit") {
         setEditStatus("お絵描きキャラを書き直して反映しました。必要ならキャラメニューからもう一度書き直せます。");
       } else {
@@ -6329,6 +6401,15 @@
     const session = drawingAvatarSession;
     if (!session || !drawingAvatarPanelOpen()) return;
     const key = String(event.key || "").toLowerCase();
+    if (key === "escape") {
+      event.preventDefault();
+      closeDrawingAvatarPanel();
+      return;
+    }
+    if (key === "tab") {
+      trapDrawingAvatarFocus(event);
+      return;
+    }
     if (event.ctrlKey || event.metaKey) {
       if (key === "z" && !event.shiftKey) {
         event.preventDefault();
@@ -7047,7 +7128,6 @@
     state.hairColor = normalizeHexColor(value);
     state.hairTintEnabled = true;
     updateHairColorUi();
-    clearHairTintCache();
   }
 
   // 色相・明るさをストレートアルファの画素値へ直接適用する。
@@ -10186,6 +10266,7 @@
   const hairWarpBaseSpringSample = {};
   const hairBendSpringSample = {}; // ★10 のしなり参照サンプル用スクラッチ
   const hairBundleSpringSampleScratch = {};
+  const hairBundleInfluenceScratch = {};
   const hairBundleRigMixScratch = {};
   const hairBundleRigMotionSpringScratch = {};
   const hairBundleRigMotionScratch = {
@@ -10363,7 +10444,7 @@
     return sampleHairSpringState(spring, n, out);
   }
 
-  function hairBundleInfluence(x, y, def, line) {
+  function hairBundleInfluence(x, y, def, line, out = hairBundleInfluenceScratch) {
     const root = line.root;
     const tip = line.tip;
     const vx = tip.x - root.x;
@@ -10380,11 +10461,10 @@
     if (distanceWeight <= 0.001) return null;
     const rootDistance = clamp(Math.hypot(x - root.x, y - root.y) / Math.max(1, len), 0, 1.25);
     const tipWeight = smoothstep(0.12, 1.02, t * 0.78 + rootDistance * 0.22);
-    return {
-      t,
-      tipWeight,
-      weight: distanceWeight * (0.28 + tipWeight * 0.72),
-    };
+    out.t = t;
+    out.tipWeight = tipWeight;
+    out.weight = distanceWeight * (0.28 + tipWeight * 0.72);
+    return out;
   }
 
   function sampleHairBundleRigMotion(x, y, layer, baseSpring, baseMask) {
@@ -10727,16 +10807,21 @@
     return { blur };
   }
 
+  function currentFaceMeshWarpPoint(x, y) {
+    return tearLensWarpPoint(x, y);
+  }
+
   function currentFaceMeshSpec() {
+    if (faceMeshSpecCacheFrame === motionFrameId && faceMeshSpecCache.warpFn) return faceMeshSpecCache;
     const useTearLensMesh = state.tearLensEnabled && state.tearLensStrength > 0 && !state.eyeSetupMode && !state.faceDepthSetupMode && !blinkClosed;
     const yaw = Math.abs(clamp(state.angleX * (state.angleStrength / 100), -1.6, 1.6));
     const useFeatureTurnMesh = faceTurnDepthAmount() > 0.001 && yaw > 0.02 && !state.eyeSetupMode && !state.faceDepthSetupMode;
     const useHighMesh = useTearLensMesh || useFeatureTurnMesh;
-    return {
-      warpFn: (x, y) => tearLensWarpPoint(x, y),
-      cols: useHighMesh ? 28 : 14,
-      rows: useHighMesh ? 20 : 10,
-    };
+    faceMeshSpecCache.warpFn = currentFaceMeshWarpPoint;
+    faceMeshSpecCache.cols = useHighMesh ? 28 : 14;
+    faceMeshSpecCache.rows = useHighMesh ? 20 : 10;
+    faceMeshSpecCacheFrame = motionFrameId;
+    return faceMeshSpecCache;
   }
 
   function drawFrontHairShadowReceiverMask() {
@@ -13746,7 +13831,6 @@
     bindRange("hairTintLightness", "hairTintLightness", "%", () => {
       state.hairTintEnabled = true;
       updateHairColorUi();
-      clearHairTintCache();
       updateChangedBadgeForControl("hairTintEnabled");
     });
     bindRange("tearLensStrength", "tearLensStrength");

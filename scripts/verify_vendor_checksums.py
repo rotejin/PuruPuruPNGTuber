@@ -33,6 +33,12 @@ def verify_checksum_file(checksum_file: Path) -> list[str]:
             errors.append(f"{checksum_file}:{line_number}: invalid line")
             continue
         relative = relative.strip()
+        if relative.startswith("*"):
+            # `sha256sum -b` prefixes binary-mode paths with `*`.
+            relative = relative[1:]
+        if not relative:
+            errors.append(f"{checksum_file}:{line_number}: invalid line")
+            continue
         path = (base_dir / relative).resolve()
         try:
             path.relative_to(base_dir.resolve())
