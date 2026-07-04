@@ -6256,6 +6256,9 @@
       frontHairShadowEnabled: false,
       highlightEnabled: false,
       highlightSetupMode: false,
+      hairTintEnabled: false,
+      hairTintLightness: 0,
+      hairColor: "#2C292C",
     };
     settingsPayload.itemLayers = (itemLayerDrafts || []).map((draft) => ({ ...draft }));
     settingsPayload.activeItemLayerId = itemLayerDrafts?.length ? itemLayerDrafts[itemLayerDrafts.length - 1].id : null;

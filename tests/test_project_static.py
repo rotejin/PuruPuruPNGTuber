@@ -1289,6 +1289,9 @@ class ProjectStaticTests(unittest.TestCase):
         self.assertIn("collectItemImageBlobsFromSettingsPayload", record_body)
         self.assertIn("applyStandardAvatarRigBaseline(settingsPayload)", record_body)
         self.assertIn("frontHairShadowEnabled: false", record_body)
+        self.assertIn("hairTintEnabled: false", record_body)
+        self.assertIn("hairTintLightness: 0", record_body)
+        self.assertIn('hairColor: "#2C292C"', record_body)
         update_drawn_body = self.js_function_body(app, "function buildDrawnAvatarSettingsPayloadForUpdate(")
         self.assertIn("frontHairShadowEnabled: false", update_drawn_body)
 
