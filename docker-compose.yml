@@ -1,0 +1,14 @@
+# docker-compose.yml
+services:
+  purupuru-pngtuber:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: purupuru-pngtuber
+    ports:
+      - "8223:8223"
+    volumes:
+      # Keep generated settings / avatar packages / local edits persistent.
+      - ./settings:/app/settings
+      - ./assets:/app/assets
+    restart: unless-stopped
