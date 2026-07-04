@@ -666,6 +666,46 @@ class ProjectStaticTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_local_server_serves_runtime_assets(self) -> None:
+        server, thread = self.start_local_test_server()
+        host, port = server.server_address
+
+        def head(path: str):
+            connection = HTTPConnection(host, port, timeout=5)
+            connection.request("HEAD", path)
+            response = connection.getresponse()
+            response.read()
+            connection.close()
+            return response
+
+        try:
+            for path in [
+                "/index.html",
+                "/styles.css",
+                "/app.js",
+                "/favicon.ico",
+                "/vendor/fonts/zen-maru-gothic/fonts.css",
+                "/vendor/fonts/zen-maru-gothic/zen-maru-gothic-500-001.woff2",
+                "/assets/demo-avatar/default-settings.json",
+                "/assets/demo-avatar/back-hair.png",
+                "/assets/demo-avatar02/default-settings.json",
+                "/assets/demo-avatar02/front-hair.png",
+                "/assets/demo-avatar03/default-settings.json",
+                "/assets/demo-avatar03/items/body.png",
+                "/vendor/mediapipe/tasks-vision/0.10.35/vision_bundle.mjs",
+                "/vendor/mediapipe/tasks-vision/0.10.35/wasm/vision_wasm_internal.wasm",
+                "/vendor/mediapipe/face_landmarker/float16/face_landmarker.task",
+            ]:
+                with self.subTest(path=path):
+                    response = head(path)
+                    self.assertEqual(response.status, 200)
+                    self.assertIsNotNone(response.getheader("Content-Length"))
+                    self.assertIsNotNone(response.getheader("Content-Security-Policy"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_local_server_sse_runtime_normal_path(self) -> None:
         server, thread = self.start_local_test_server()
         host, port = server.server_address
@@ -1475,6 +1515,7 @@ class ProjectStaticTests(unittest.TestCase):
             ".agents/",
             "*.purupuru",
             "assets/*_backup_*/",
+            "note_draft_*.md",
             ".DS_Store",
             "Thumbs.db",
             ".vscode/",
@@ -1501,6 +1542,7 @@ class ProjectStaticTests(unittest.TestCase):
 
     def test_development_checks_and_ci_actions_are_pinned(self) -> None:
         readme = self.read_text("README.md")
+        usage = self.read_text("docs/usage.md")
         contributing = self.read_text(".github/CONTRIBUTING.md")
         workflow = self.read_text(".github/workflows/ci.yml")
         for command in [
@@ -1508,10 +1550,13 @@ class ProjectStaticTests(unittest.TestCase):
             "node --check standalone_drawing_avatar_export/standalone-drawing-avatar.js",
             "node tests/js_runtime_checks.mjs",
             "python -m py_compile scripts/run_local_server.py",
+            "python -m py_compile scripts/verify_vendor_checksums.py",
             "python -m py_compile scripts/fetch_fonts.py",
+            "python scripts/verify_vendor_checksums.py",
             "python -m unittest tests.test_project_static",
         ]:
             self.assertIn(command, readme)
+            self.assertIn(command, usage)
             self.assertIn(command, contributing)
             self.assertIn(command, workflow)
         self.assertNotIn("uses: actions/checkout@v4", workflow)

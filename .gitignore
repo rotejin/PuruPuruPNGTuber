@@ -41,4 +41,5 @@ assets/*_backup_*/
 
 # Internal review notes (not for public release)
 full-review-*.md
+note_draft_*.md
 docs/reviews/
