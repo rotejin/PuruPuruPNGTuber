@@ -6,7 +6,7 @@
   --dock-bg-strong: rgba(255, 255, 255, 0.97);
   --ink: #4a3a2e;
   --ink-soft: #6b5a4b;
-  --muted: #9a8a7a;
+  --muted: #6f5f50;
   --line: rgba(74, 58, 46, 0.12);
   --line-strong: rgba(74, 58, 46, 0.26);
   --hover-tint: rgba(74, 58, 46, 0.1);
@@ -115,7 +115,7 @@ body.stage-bg-dark {
   --dock-bg-strong: rgba(58, 53, 49, 0.97);
   --ink: #f2e8dc;
   --ink-soft: rgba(242, 232, 220, 0.72);
-  --muted: rgba(242, 232, 220, 0.5);
+  --muted: rgba(242, 232, 220, 0.7);
   --line: rgba(242, 232, 220, 0.16);
   --line-strong: rgba(242, 232, 220, 0.26);
   --hover-tint: rgba(242, 232, 220, 0.14);

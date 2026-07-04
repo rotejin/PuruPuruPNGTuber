@@ -137,6 +137,10 @@ const definitions = [
   extractConst("FORBIDDEN_JSON_KEYS"),
   extractConst("MAX_AVATAR_IMAGE_EDGE"),
   extractConst("MAX_AVATAR_IMAGE_PIXELS"),
+  extractConst("MAX_ITEM_IMAGE_FILE_SIZE"),
+  extractConst("MAX_ITEM_IMAGE_EDGE"),
+  extractConst("MAX_ITEM_IMAGE_PIXELS"),
+  extractConst("MAX_ITEM_LAYER_COUNT"),
   extractConst("PNG_DATA_URL_PREFIX"),
   extractConst("PNG_BASE64_SIGNATURE"),
   extractConst("MAX_PURUPURU_PACKAGE_SIZE"),
@@ -175,6 +179,7 @@ const definitions = [
   extractFunction("function assertPngU8("),
   extractFunction("function pngU8Dimensions("),
   extractFunction("function validateAvatarImageSize("),
+  extractFunction("function validateItemImageU8("),
   extractFunction("function validateThumbnailU8("),
   extractFunction("function avatarImageDimensions("),
   extractFunction("function validateAvatarImageDimensions("),
@@ -252,7 +257,7 @@ function tinyPngBytes(width = 900, height = 900) {
   return u8;
 }
 
-function minimalPackageBlob({ manifestPatch = {}, omitManifest = false, omitSettings = false } = {}) {
+function minimalPackageBlob({ manifestPatch = {}, settingsPatch = {}, extraFiles = {}, omitManifest = false, omitSettings = false } = {}) {
   const manifest = {
     format: "purupuru-avatar-package",
     settings: "settings.json",
@@ -262,9 +267,10 @@ function minimalPackageBlob({ manifestPatch = {}, omitManifest = false, omitSett
   };
   const files = Object.create(null);
   if (!omitManifest) files["manifest.json"] = jsonBytes(manifest);
-  if (!omitSettings) files["settings.json"] = jsonBytes({ state: {}, itemLayers: [] });
+  if (!omitSettings) files["settings.json"] = jsonBytes({ state: {}, itemLayers: [], ...settingsPatch });
   for (const path of Object.values(AVATAR_PACKAGE_ASSETS)) files[path] = tinyPngBytes();
   files["thumbnail.png"] = tinyPngBytes();
+  for (const [path, data] of Object.entries(extraFiles)) files[path] = data;
   return new Blob([buildStoredZip(files)], { type: "application/vnd.purupuru.avatar+zip" });
 }
 
@@ -350,6 +356,19 @@ assert.equal(parsed.settingsPayload.avatarImageSize.width, 900);
 assert.equal(parsed.settingsPayload.avatarImageSize.height, 900);
 assert.equal(Object.keys(parsed.avatarImageBlobs).length, Object.keys(AVATAR_PACKAGE_ASSETS).length);
 
+const tooManyItemLayers = Array.from({ length: MAX_ITEM_LAYER_COUNT + 5 }, (_, index) => ({
+  id: index + 1,
+  name: "item " + (index + 1),
+  file: "items/shared.png",
+}));
+const cappedItems = await parsePuruPuruPackageBlob(minimalPackageBlob({
+  settingsPatch: { itemLayers: tooManyItemLayers },
+  extraFiles: { "items/shared.png": tinyPngBytes(32, 32) },
+}));
+assert.equal(cappedItems.settingsPayload.itemLayers.length, MAX_ITEM_LAYER_COUNT);
+assert.equal(cappedItems.hydratedSettingsPayload.itemLayers.length, MAX_ITEM_LAYER_COUNT);
+assert.equal(Object.keys(cappedItems.itemImageBlobs).length, MAX_ITEM_LAYER_COUNT);
+
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ omitManifest: true })), /manifest/);
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ omitSettings: true })), /settings/);
 await expectReject(() => parsePuruPuruPackageBlob(minimalPackageBlob({ manifestPatch: { settings: "../settings.json" } })), /不正/);
@@ -365,6 +384,5 @@ await vm.runInNewContext(testProgram, {
   DataView,
   btoa: (value) => Buffer.from(value, "binary").toString("base64"),
 });
-
 
 

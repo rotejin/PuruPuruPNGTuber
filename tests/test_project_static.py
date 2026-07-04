@@ -656,6 +656,65 @@ class ProjectStaticTests(unittest.TestCase):
         ]:
             self.assertIn(expected, app)
 
+    def test_purupuru_item_layers_are_capped_during_parse(self) -> None:
+        app = self.read_text("app.js")
+        parse_body = self.js_function_body(app, "async function parsePuruPuruPackageBlob(")
+
+        self.assertIn("const cappedItemLayers = settingsPayload.itemLayers.slice(0, MAX_ITEM_LAYER_COUNT);", parse_body)
+        self.assertIn("settingsPayload.itemLayers = cappedItemLayers;", parse_body)
+        self.assertIn("hydratedSettingsPayload.itemLayers = cappedItemLayers.map", parse_body)
+        self.assertIn("let itemImageBytesTotal = 0;", parse_body)
+        self.assertIn("itemImageBytesTotal += itemU8.length;", parse_body)
+        self.assertIn("if (itemImageBytesTotal > MAX_PURUPURU_UNZIPPED_SIZE)", parse_body)
+        self.assertNotIn("settingsPayload.itemLayers.map((layer", parse_body)
+
+    def test_active_character_id_is_reassigned_before_deleted_active_apply(self) -> None:
+        app = self.read_text("app.js")
+        delete_body = self.js_function_body(app, "async function deleteCharacterProfile(")
+
+        delete_index = delete_body.index("await deleteCharacterProfileRecord(targetId);")
+        active_index = delete_body.index("activeCharacterId = fallbackRecord.id;", delete_index)
+        remember_index = delete_body.index("rememberActiveCharacterId(fallbackRecord.id);", active_index)
+        apply_index = delete_body.index(
+            "await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true, skipActiveUpdate: true });",
+            remember_index,
+        )
+        self.assertLess(delete_index, active_index)
+        self.assertLess(active_index, remember_index)
+        self.assertLess(remember_index, apply_index)
+        self.assertIn("await touchCharacterProfile(fallbackRecord.id);", delete_body)
+        self.assertNotIn("await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true });", delete_body)
+
+    def test_muted_text_color_meets_wcag_aa_for_small_text(self) -> None:
+        css = self.read_text("styles.css")
+
+        def hex_rgb(value: str) -> tuple[int, int, int]:
+            value = value.lstrip("#")
+            return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+        def srgb_to_linear(channel: int) -> float:
+            value = channel / 255
+            if value <= 0.03928:
+                return value / 12.92
+            return ((value + 0.055) / 1.055) ** 2.4
+
+        def luminance(rgb: tuple[int, int, int]) -> float:
+            red, green, blue = (srgb_to_linear(channel) for channel in rgb)
+            return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+        def contrast(foreground: tuple[int, int, int], background: tuple[int, int, int]) -> float:
+            high, low = sorted([luminance(foreground), luminance(background)], reverse=True)
+            return (high + 0.05) / (low + 0.05)
+
+        def blend(foreground: tuple[int, int, int], alpha: float, background: tuple[int, int, int]) -> tuple[int, int, int]:
+            return tuple(round(foreground[index] * alpha + background[index] * (1 - alpha)) for index in range(3))
+
+        self.assertIn("--muted: #6f5f50;", css)
+        self.assertIn("--muted: rgba(242, 232, 220, 0.7);", css)
+        self.assertGreaterEqual(contrast(hex_rgb("#6f5f50"), hex_rgb("#fff8ee")), 4.5)
+        dark_muted = blend(hex_rgb("#f2e8dc"), 0.7, hex_rgb("#3a3531"))
+        self.assertGreaterEqual(contrast(dark_muted, hex_rgb("#3a3531")), 4.5)
+
     def test_js_runtime_security_and_package_guards(self) -> None:
         result = subprocess.run(
             ["node", str(ROOT / "tests" / "js_runtime_checks.mjs")],

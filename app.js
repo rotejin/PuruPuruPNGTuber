@@ -2077,12 +2077,19 @@
 
     const itemImageBlobs = {};
     if (Array.isArray(settingsPayload.itemLayers)) {
-      hydratedSettingsPayload.itemLayers = settingsPayload.itemLayers.map((layer, index) => {
+      const cappedItemLayers = settingsPayload.itemLayers.slice(0, MAX_ITEM_LAYER_COUNT);
+      settingsPayload.itemLayers = cappedItemLayers;
+      let itemImageBytesTotal = 0;
+      hydratedSettingsPayload.itemLayers = cappedItemLayers.map((layer, index) => {
         if (!layer || typeof layer !== "object" || !layer.file) return layer;
         const itemPath = assertSafePackagePath(layer.file);
         const itemU8 = unzipped[itemPath];
         if (!itemU8) return layer;
         validateItemImageU8(itemU8, itemPath);
+        itemImageBytesTotal += itemU8.length;
+        if (itemImageBytesTotal > MAX_PURUPURU_UNZIPPED_SIZE) {
+          throw new Error("PNGアイテムの合計が大きすぎます。");
+        }
         const id = String(layer.id ?? index + 1);
         itemImageBlobs[id] = {
           blob: pngU8ToBlob(itemU8),
@@ -4358,10 +4365,11 @@
       rememberDeletedAutoCharacterSourceKind(managedDemoAvatarSourceKindForProfile(target) || target.source?.kind);
 
       if (deletingActive) {
-        await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true });
         activeCharacterId = fallbackRecord.id;
         rememberActiveCharacterId(fallbackRecord.id);
         activeCharacterSourceKind = String(fallbackRecord.source?.kind || "");
+        await applyCharacterProfileRecord(fallbackRecord, { preserveGlobalRuntime: true, skipActiveUpdate: true });
+        await touchCharacterProfile(fallbackRecord.id);
         updateCharacterSaveStatus("保存済み");
       }
 
